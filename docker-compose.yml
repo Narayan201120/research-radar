@@ -24,6 +24,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    volumes:
+      - ./backend/alembic/versions:/app/alembic/versions
     ports:
       - "8000:8000"
     healthcheck:

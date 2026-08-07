@@ -11,6 +11,9 @@ class Settings(BaseSettings):
         "postgresql+psycopg://research:research@postgres:5432/research_radar"
     )
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+    openalex_mailto: str = "research-radar@example.com"
+    openalex_topic_cv_id: str = "T10531"
+    openalex_topic_llm_id: str = "T10181"
 
     @property
     def cors_origins_list(self) -> list[str]:
