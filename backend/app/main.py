@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.health import router as health_router
+from app.api.papers import router as papers_router
 from app.core.settings import get_settings
 
 
@@ -19,6 +20,7 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(health_router)
+    app.include_router(papers_router)
 
     return app
 
