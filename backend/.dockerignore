@@ -1,0 +1,15 @@
+# Static artifacts
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/
+
+# Raw data dumps
+*.jsonl
+*.csv
+data/
+
+# Local env overrides
+.env
