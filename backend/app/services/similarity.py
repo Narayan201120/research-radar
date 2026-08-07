@@ -10,14 +10,23 @@ _MIN_NONZERO_SCORE = 0.0
 
 
 def build_tfidf_matrix(texts: list[str]) -> csr_matrix:
-    """TF-IDF matrix for the given documents (rows aligned with ``texts``)."""
+    """TF-IDF matrix for the given documents (rows aligned with ``texts``).
+
+    A corpus with no usable text (empty list, or every document empty after
+    stopword filtering) yields an empty matrix instead of raising.
+    """
+    if not texts:
+        return csr_matrix((0, 0))
     vectorizer = TfidfVectorizer(
         lowercase=True,
         stop_words="english",
         ngram_range=(1, 2),
         min_df=1,
     )
-    return vectorizer.fit_transform(texts)
+    try:
+        return vectorizer.fit_transform(texts)
+    except ValueError:
+        return csr_matrix((len(texts), 0))
 
 
 def find_top_similar(matrix: csr_matrix, top_k: int = DEFAULT_TOP_K) -> list[tuple[int, int, float]]:
@@ -26,7 +35,7 @@ def find_top_similar(matrix: csr_matrix, top_k: int = DEFAULT_TOP_K) -> list[tup
     Deterministic: ties broken by (score DESC, j ASC).
     """
     n = matrix.shape[0]
-    if n < 2:
+    if n < 2 or matrix.shape[1] == 0:
         return []
 
     sim: ndarray = cosine_similarity(matrix)

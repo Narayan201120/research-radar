@@ -25,7 +25,7 @@ from sqlalchemy import func, select
 from app.core.settings import get_settings
 from app.db.session import SessionLocal
 from app.models import Paper, PaperSimilarity
-from app.services.ingest import run_ingest, run_similarity_rebuild
+from app.services.ingest import resolve_boot_action, run_ingest, run_similarity_rebuild
 from app.services.openalex import OpenAlexClient
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -70,16 +70,20 @@ def main() -> int:
 
             if args.boot:
                 papers_count = session.scalar(select(func.count()).select_from(Paper)) or 0
-                if papers_count == 0:
-                    logger.info("boot: database empty, running full ingest")
-                else:
-                    sim_count = session.scalar(select(func.count()).select_from(PaperSimilarity)) or 0
-                    if sim_count > 0:
-                        logger.info("boot: papers present (%s) and similarity present (%s pairs), skipping", papers_count, sim_count)
-                        return 0
+                sim_count = session.scalar(select(func.count()).select_from(PaperSimilarity)) or 0
+                action = resolve_boot_action(papers_count, sim_count)
+                if action == "skip":
+                    logger.info(
+                        "boot: papers present (%s) and similarity present (%s pairs), skipping",
+                        papers_count,
+                        sim_count,
+                    )
+                    return 0
+                if action == "rebuild-similarity":
                     pairs = run_similarity_rebuild(session)
                     logger.info("boot: papers present (%s), rebuilt missing similarity (%s pairs)", papers_count, pairs)
                     return 0
+                logger.info("boot: database empty, running full ingest")
 
             client = OpenAlexClient(settings.openalex_mailto)
             try:

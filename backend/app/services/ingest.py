@@ -254,3 +254,12 @@ def run_similarity_rebuild(session: Session, top_k: int = 5) -> int:
 def clear_similarity(session: Session) -> None:
     """Wipe stale similarity snapshot before regenerating (same transaction)."""
     session.execute(PaperSimilarity.__table__.delete())
+
+
+def resolve_boot_action(papers: int, similarity_pairs: int) -> str:
+    """What ``--boot`` should do, given current table sizes."""
+    if papers == 0:
+        return "ingest"
+    if similarity_pairs == 0:
+        return "rebuild-similarity"
+    return "skip"
