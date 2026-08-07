@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Author, Paper, PaperAuthor, PaperSimilarity, PaperTopic, Topic
 from app.services.openalex import OpenAlexClient, reconstruct_abstract
+from app.services.similarity import build_tfidf_matrix, find_top_similar
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,7 @@ class IngestReport:
     papers_updated: int = 0
     authors: int = 0
     relations: int = 0
+    similarity_pairs: int = 0
     papers_in_db: int = 0
     fell_back_to: str | None = None
 
@@ -207,11 +209,46 @@ def run_ingest(
                 report.relations += 1
 
     report.authors = len(author_rows)
+
+    # 6. Rebuild the similarity snapshot in the same transaction
+    report.similarity_pairs = rebuild_similarity(session)
     session.commit()
 
     report.papers_in_db = session.scalar(select(func.count()).select_from(Paper)) or 0
     logger.info("ingest complete: %s papers (%s new, %s updated)", report.papers, report.papers_new, report.papers_updated)
     return report
+
+
+def rebuild_similarity(session: Session, top_k: int = 5) -> int:
+    """Regenerate the paper_similarity snapshot inside the current transaction.
+
+    Every paper gets up to ``top_k`` neighbors with score > 0. Papers with no
+    text (no title and no abstract) produce zero vectors and therefore no rows.
+    """
+    clear_similarity(session)
+    rows = session.execute(select(Paper.id, Paper.title, Paper.abstract).order_by(Paper.id)).all()
+    if len(rows) < 2:
+        return 0
+
+    ids = [int(row.id) for row in rows]
+    texts = [
+        " ".join(part.strip() for part in (row.title, row.abstract) if part and part.strip())
+        for row in rows
+    ]
+    matrix = build_tfidf_matrix(texts)
+    triples = find_top_similar(matrix, top_k)
+    session.add_all(
+        PaperSimilarity(paper_id=ids[i], similar_paper_id=ids[j], similarity_score=score)
+        for i, j, score in triples
+    )
+    return len(triples)
+
+
+def run_similarity_rebuild(session: Session, top_k: int = 5) -> int:
+    """Standalone similarity-only rebuild in its own transaction."""
+    count = rebuild_similarity(session)
+    session.commit()
+    return count
 
 
 def clear_similarity(session: Session) -> None:

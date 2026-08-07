@@ -4,5 +4,6 @@ sqlalchemy>=2.0,<3.0
 psycopg[binary]
 pydantic-settings
 alembic
+scikit-learn
 pytest
 httpx

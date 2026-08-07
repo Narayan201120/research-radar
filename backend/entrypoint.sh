@@ -32,8 +32,8 @@ if [ -f alembic.ini ] && command -v alembic >/dev/null 2>&1; then
 fi
 
 if [ "${INGEST_ON_BOOT:-true}" = "true" ] && [ -f scripts/ingest_openalex.py ]; then
-    echo "[entrypoint] ingesting papers if database is empty"
-    python -m scripts.ingest_openalex --only-if-empty
+    echo "[entrypoint] self-healing data (ingest if empty, similarity if missing)"
+    python -m scripts.ingest_openalex --boot
 fi
 
 echo "[entrypoint] starting uvicorn"
