@@ -98,7 +98,16 @@ export default function SearchExplorer({
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8">
-      <h1 className="text-3xl font-bold text-slate-900">Research Radar</h1>
+      <div className="flex items-center gap-3">
+        <img
+          src="/logo-mark.svg"
+          alt="Research Radar mark"
+          width={130}
+          height={130}
+          className="h-14 w-auto"
+        />
+        <h1 className="text-3xl font-bold text-slate-900">Research Radar</h1>
+      </div>
       <p className="mt-1 text-slate-500">
         Search recent papers in computer vision and large language models.
       </p>
