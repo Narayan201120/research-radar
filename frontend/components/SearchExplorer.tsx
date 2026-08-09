@@ -106,7 +106,10 @@ export default function SearchExplorer({
           height={130}
           className="h-14 w-auto"
         />
-        <h1 className="text-3xl font-bold text-slate-900">Research Radar</h1>
+        <h1 className="text-3xl font-bold tracking-tight">
+          <span className="text-slate-900">Research</span>{" "}
+          <span className="text-indigo-600">Radar</span>
+        </h1>
       </div>
       <p className="mt-1 text-slate-500">
         Search recent papers in computer vision and large language models.
