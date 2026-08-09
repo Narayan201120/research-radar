@@ -62,12 +62,16 @@ export default async function PaperDetailPage({
           </a>
         )}
 
-        {paper.abstract && (
-          <section className="mt-8">
-            <h2 className="text-lg font-semibold text-slate-900">Abstract</h2>
+        <section className="mt-8">
+          <h2 className="text-lg font-semibold text-slate-900">Abstract</h2>
+          {paper.abstract ? (
             <p className="mt-2 leading-relaxed text-slate-600">{paper.abstract}</p>
-          </section>
-        )}
+          ) : (
+            <p className="mt-2 text-sm italic text-slate-400">
+              No abstract available from the source.
+            </p>
+          )}
+        </section>
 
         <section className="mt-10">
           <h2 className="text-lg font-semibold text-slate-900">Similar papers</h2>
