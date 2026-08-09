@@ -2,57 +2,57 @@
 
 ## Backend
 
-- [ ] FastAPI
-- [ ] PostgreSQL
-- [ ] SQLAlchemy 2.0
-- [ ] Alembic
-- [ ] Dockerized
+- [x] FastAPI
+- [x] PostgreSQL
+- [x] SQLAlchemy 2.0
+- [x] Alembic
+- [x] Dockerized
 
 ## Data
 
-- [ ] 300-500 papers
-- [ ] Two topics
-- [ ] Idempotent ingestion
+- [x] 300-500 papers
+- [x] Two topics
+- [x] Idempotent ingestion
 
 ## API
 
-- [ ] Pagination
-- [ ] Search
-- [ ] Year filter
-- [ ] Topic filter
-- [ ] Author filter
-- [ ] Detail endpoint
+- [x] Pagination
+- [x] Search
+- [x] Year filter
+- [x] Topic filter
+- [x] Author filter
+- [x] Detail endpoint
 
 ## AI
 
-- [ ] Similar papers endpoint
-- [ ] Top 5 results
-- [ ] Similarity scores
+- [x] Similar papers endpoint
+- [x] Top 5 results
+- [x] Similarity scores
 
 ## Frontend
 
-- [ ] Search page
-- [ ] Debounced search
-- [ ] Filters
-- [ ] Pagination
-- [ ] Detail page
+- [x] Search page
+- [x] Debounced search
+- [x] Filters
+- [x] Pagination
+- [x] Detail page
 
 ## UX
 
-- [ ] Loading states
-- [ ] Empty states
-- [ ] Error states
+- [x] Loading states
+- [x] Empty states
+- [x] Error states
 
 ## Testing
 
-- [ ] Search tests
-- [ ] Filter tests
-- [ ] Pagination tests
-- [ ] Similarity tests
+- [x] Search tests
+- [x] Filter tests
+- [x] Pagination tests
+- [x] Similarity tests
 
 ## Delivery
 
-- [ ] Docker Compose works
-- [ ] README complete
-- [ ] Meaningful git history
+- [x] Docker Compose works
+- [x] README complete
+- [x] Meaningful git history
 - [ ] Screen recording
