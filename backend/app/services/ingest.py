@@ -3,10 +3,12 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
+import httpx
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import Author, Paper, PaperAuthor, PaperSimilarity, PaperTopic, Topic
+from app.services.doi_checker import verify_works
 from app.services.openalex import OpenAlexClient, reconstruct_abstract
 from app.services.similarity import build_tfidf_matrix, find_top_similar
 
@@ -38,6 +40,9 @@ class IngestReport:
     similarity_pairs: int = 0
     papers_in_db: int = 0
     fell_back_to: str | None = None
+    dois_checked: int = 0
+    dois_replaced: int = 0
+    dois_dropped: int = 0
 
 
 def _fetch_topic(client: OpenAlexClient, topic_id: str) -> tuple[list[dict], str]:
@@ -101,10 +106,16 @@ def run_ingest(
     topics: list[tuple[str, str, str]],
     *,
     only_if_empty: bool = False,
+    verify_dois: bool = False,
+    doi_transport: httpx.BaseTransport | None = None,
 ) -> IngestReport:
     """Upsert papers/authors/topics + rebuild junctions inside one transaction.
 
     topics: list of (slug, openalex_topic_id, display_name).
+    verify_dois: when True, DOIs are checked at ingest; works whose DOI is
+    definitively dead (404/410) and has no resolving alternate landing page
+    are dropped before normalization. doi_transport overrides the HTTP
+    transport (tests).
     """
     report = IngestReport()
 
@@ -131,6 +142,25 @@ def run_ingest(
             fell_back = True
         logger.info("topic %s: fetched %s papers (from %s)", slug, len(batch), from_date)
     report.fell_back_to = None if not fell_back else "date ladder"
+
+    # 2b. Verify DOIs before normalizing (dropped works never reach the DB)
+    if verify_dois:
+        all_works = [w for batch in fetched.values() for w in batch]
+        report.dois_checked = sum(1 for w in all_works if (w.get("doi") or "").strip())
+        kept, dropped, replaced = verify_works(all_works, transport=doi_transport)
+        report.dois_replaced = replaced
+        report.dois_dropped = len(dropped)
+        if dropped:
+            logger.warning(
+                "dropping %s works with unresolvable DOIs: %s",
+                len(dropped),
+                ", ".join(str(w.get("id")) for w in dropped),
+            )
+        by_id = {w.get("id"): w for w in kept}
+        fetched = {
+            slug: [w for w in batch if w.get("id") in by_id]
+            for slug, batch in fetched.items()
+        }
 
     # 3. Normalize + dedupe across topics by openalex_id
     normalized: dict[str, dict] = {}

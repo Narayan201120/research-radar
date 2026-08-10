@@ -119,3 +119,55 @@ def test_topic_upsert_matches_slug(session):
     client = FakeOpenAlexClient()
     run_ingest(session, client, TOPICS)
     assert {t.slug for t in session.scalars(select(Topic)).all()} == {"computer-vision", "large-language-models"}
+
+
+def test_ingest_verifies_dois_and_drops_unresolvable(session, monkeypatch):
+    import httpx
+
+    client = FakeOpenAlexClient()
+    # W-dead-1: dead DOI with working arXiv fallback -> replaced, kept
+    client.by_topic["T10531"].insert(
+        0,
+        make_work(
+            "W-dead-1",
+            "vision paper with dead DOI and arxiv mirror",
+            doi="https://doi.org/10.1/dead1",
+        ),
+    )
+    # W-dead-2: dead DOI, no working fallback -> dropped entirely
+    client.by_topic["T10531"].insert(
+        0,
+        make_work(
+            "W-dead-2",
+            "vision paper with dead DOI and no mirror",
+            doi="https://doi.org/10.1/dead2",
+        ),
+    )
+    # give the dead works an arXiv mirror location so fallback can find it
+    for w in client.by_topic["T10531"]:
+        if w["id"].endswith("W-dead-1"):
+            w["locations"] = [{"landing_page_url": "https://arxiv.org/abs/9999.99999"}]
+
+    def handler(request):
+        url = str(request.url)
+        if "10.1/dead" in url:
+            return httpx.Response(404)
+        if "arxiv.org" in url:
+            return httpx.Response(200)
+        return httpx.Response(200)
+
+    transport = httpx.MockTransport(handler)
+
+    report = run_ingest(session, client, TOPICS, verify_dois=True, doi_transport=transport)
+
+    assert report.dois_checked == 2 * PER_TOPIC + 2
+    assert report.dois_replaced == 1
+    assert report.dois_dropped == 1
+    assert report.papers == 2 * PER_TOPIC + 1
+    in_db = {p.openalex_id for p in session.scalars(select(Paper)).all()}
+    assert "W-dead-1" in in_db
+    assert "W-dead-2" not in in_db
+    replaced = session.scalar(
+        select(Paper).where(Paper.openalex_id == "W-dead-1")
+    )
+    assert replaced.doi == "https://arxiv.org/abs/9999.99999"

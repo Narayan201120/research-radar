@@ -2,7 +2,7 @@
 """Idempotent OpenAlex ingestion for Research Radar.
 
 Usage:
-    python -m scripts.ingest_openalex [--only-if-empty] [--similarity-only] [--boot]
+    python -m scripts.ingest_openalex [--only-if-empty] [--similarity-only] [--boot] [--no-verify-dois]
 
 Modes:
     default          fetch + upsert papers, then rebuild similarity snapshot
@@ -10,6 +10,9 @@ Modes:
     --similarity-only  rebuild the similarity snapshot, no network fetch
     --boot           self-heal: full ingest when empty; similarity-only when
                      papers exist but the snapshot is empty; else skip.
+    --no-verify-dois  skip DOI verification (default: each DOI is checked;
+                     dead DOIs get an arXiv-first fallback, else the work is
+                     dropped before normalization)
 
 Exit code 0 on success, 1 on failure.
 """
@@ -56,6 +59,11 @@ def main() -> int:
         action="store_true",
         help="self-heal mode: ingest when empty, rebuild similarity when missing, else skip",
     )
+    parser.add_argument(
+        "--no-verify-dois",
+        action="store_true",
+        help="skip DOI verification at ingest (default: verify, arXiv-first fallback)",
+    )
     args = parser.parse_args()
 
     settings = get_settings()
@@ -93,17 +101,22 @@ def main() -> int:
                         client,
                         topics,
                         only_if_empty=args.only_if_empty,
+                        verify_dois=not args.no_verify_dois,
                     )
             finally:
                 client.close()
             logger.info(
-                "fetched=%s papers=%s new=%s updated=%s authors=%s relations=%s similarity_pairs=%s total_in_db=%s",
+                "fetched=%s papers=%s new=%s updated=%s authors=%s relations=%s "
+                "dois_checked=%s dois_replaced=%s dois_dropped=%s similarity_pairs=%s total_in_db=%s",
                 sum(report.topics_fetched.values()),
                 report.papers,
                 report.papers_new,
                 report.papers_updated,
                 report.authors,
                 report.relations,
+                report.dois_checked,
+                report.dois_replaced,
+                report.dois_dropped,
                 report.similarity_pairs,
                 report.papers_in_db,
             )
