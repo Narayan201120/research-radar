@@ -12,7 +12,7 @@ with a **Find Similar Papers** feature powered by TF-IDF vector similarity.
 | Backend    | FastAPI, SQLAlchemy 2.0, Alembic                  |
 | Database   | PostgreSQL 16                                     |
 | Similarity | scikit-learn `TfidfVectorizer` + cosine similarity |
-| Tests      | pytest (45 tests, SQLite in-memory, no network)   |
+| Tests      | pytest (54 tests, SQLite in-memory, no network)   |
 | Infra      | Docker Compose                                    |
 
 ## Quick start
@@ -81,13 +81,13 @@ ILIKE substring search over title/abstract, documented tradeoff).
 ```json
 {
   "items": [{
-    "id": 431,
+    "id": 253,
     "title": "Attention Is All You Need",
-    "publication_year": 2025,
-    "cited_by_count": 6600,
-    "authors": [{"id": 3, "name": "Ada Lovelace"}]
+    "publication_year": 2017,
+    "cited_by_count": 6659,
+    "authors": [{"id": 1252, "name": "Ashish Vaswani"}]
   }],
-  "total": 137,
+  "total": 70,
   "page": 1,
   "page_size": 20
 }
@@ -113,12 +113,13 @@ Top-5 similar papers, self-excluded by construction, scores rounded to 4 decimal
 docker compose exec backend python -m pytest
 ```
 
-45 tests, run against a per-test in-memory SQLite schema (hermetic, no network):
+54 tests, run against a per-test in-memory SQLite schema (hermetic, no network):
 similarity edge cases (empty corpus, single paper, zero vectors, duplicate
 titles, determinism), API endpoints (search/filters/pagination/404s/LIKE
 escaping), ingest idempotency (fake client fetched twice → 0 new rows), the
-real OpenAlex client (httpx `MockTransport`, no network), and abstract
-reconstruction.
+real OpenAlex client (httpx `MockTransport`, no network), abstract
+reconstruction, and the DOI verifier (arXiv-first fallback, dead-link
+classification).
 
 ## Repository layout
 
