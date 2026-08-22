@@ -6,4 +6,5 @@ pydantic-settings
 alembic
 scikit-learn
 httpx
+fastembed==0.8.0
 pytest
