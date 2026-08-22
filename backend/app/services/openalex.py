@@ -55,20 +55,47 @@ class OpenAlexClient:
                 time.sleep(2**attempt)
         raise OpenAlexError(f"OpenAlex request failed after {MAX_RETRIES} attempts: {last_error}")
 
-    def fetch_topic_works(self, topic_id: str, from_date: str, max_papers: int) -> list[dict]:
-        """Cursor-paginate the top-cited works for a topic since from_date."""
+    def _paginate(self, base_params: dict, max_papers: int) -> list[dict]:
         results: list[dict] = []
         cursor: str | None = "*"
         while cursor and len(results) < max_papers:
             params = {
-                "filter": f"topics.id:{topic_id},from_publication_date:{from_date}",
-                "sort": "cited_by_count:desc",
+                **base_params,
                 "per-page": str(PER_PAGE),
                 "cursor": cursor,
-                "mailto": self._mailto,
             }
             data = self._get("/works", params)
             results.extend(data.get("results", []))
             cursor = (data.get("meta") or {}).get("next_cursor")
-            time.sleep(REQUEST_DELAY_SECONDS)
+            if cursor:
+                time.sleep(REQUEST_DELAY_SECONDS)
         return results[:max_papers]
+
+    def fetch_topic_works(self, topic_id: str, from_date: str, max_papers: int) -> list[dict]:
+        """Cursor-paginate the top-cited works for a topic since from_date."""
+        return self._paginate(
+            {
+                "filter": f"topics.id:{topic_id},from_publication_date:{from_date}",
+                "sort": "cited_by_count:desc",
+                "mailto": self._mailto,
+            },
+            max_papers,
+        )
+
+    def fetch_updated_works(
+        self, topic_id: str, from_updated_date: str, max_papers: int
+    ) -> list[dict]:
+        """Cursor-paginate works for a topic changed since from_updated_date.
+
+        Sorts by ``updated_date`` instead of citations: freshly published or
+        re-indexed works have ~0 citations and would never surface under the
+        cited-by sort used for cold-start ingests.
+        """
+        return self._paginate(
+            {
+                "filter": f"topics.id:{topic_id},from_updated_date:{from_updated_date}",
+                "sort": "updated_date:desc",
+                "mailto": self._mailto,
+            },
+            max_papers,
+        )

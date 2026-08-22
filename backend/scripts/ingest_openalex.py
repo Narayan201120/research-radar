@@ -2,12 +2,17 @@
 """Idempotent OpenAlex ingestion for Research Radar.
 
 Usage:
-    python -m scripts.ingest_openalex [--only-if-empty] [--similarity-only] [--boot] [--no-verify-dois]
+    python -m scripts.ingest_openalex [--only-if-empty] [--similarity-only]
+                                      [--boot] [--no-verify-dois]
+                                      [--incremental] [--since YYYY-MM-DD]
 
 Modes:
     default          fetch + upsert papers, then rebuild similarity snapshot
     --only-if-empty  skip ingestion when the paper table already has rows
     --similarity-only  rebuild the similarity snapshot, no network fetch
+    --incremental    fetch only works changed since each topic's watermark
+                     (requires a prior full ingest); combine with --since
+                     YYYY-MM-DD to backfill from an explicit date
     --boot           self-heal: full ingest when empty; similarity-only when
                      papers exist but the snapshot is empty; else skip.
     --no-verify-dois  skip DOI verification (default: each DOI is checked;
@@ -28,7 +33,13 @@ from sqlalchemy import func, select
 from app.core.settings import get_settings
 from app.db.session import SessionLocal
 from app.models import Paper, PaperSimilarity
-from app.services.ingest import resolve_boot_action, run_ingest, run_similarity_rebuild
+from app.services.ingest import (
+    backfill_watermarks,
+    resolve_boot_action,
+    run_incremental_ingest,
+    run_ingest,
+    run_similarity_rebuild,
+)
 from app.services.openalex import OpenAlexClient
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -60,11 +71,27 @@ def main() -> int:
         help="self-heal mode: ingest when empty, rebuild similarity when missing, else skip",
     )
     parser.add_argument(
+        "--incremental",
+        action="store_true",
+        help="fetch only works changed since each topic's last watermark",
+    )
+    parser.add_argument(
+        "--since",
+        metavar="YYYY-MM-DD",
+        default=None,
+        help="with --incremental: fetch changes since this date instead of the watermark",
+    )
+    parser.add_argument(
         "--no-verify-dois",
         action="store_true",
         help="skip DOI verification at ingest (default: verify, arXiv-first fallback)",
     )
     args = parser.parse_args()
+
+    if args.incremental and (args.boot or args.similarity_only):
+        parser.error("--incremental cannot be combined with --boot or --similarity-only")
+    if args.since and not args.incremental:
+        parser.error("--since requires --incremental")
 
     settings = get_settings()
     topics = _topics(settings)
@@ -80,6 +107,7 @@ def main() -> int:
                 papers_count = session.scalar(select(func.count()).select_from(Paper)) or 0
                 sim_count = session.scalar(select(func.count()).select_from(PaperSimilarity)) or 0
                 action = resolve_boot_action(papers_count, sim_count)
+                backfill_watermarks(session, topics)
                 if action == "skip":
                     logger.info(
                         "boot: papers present (%s) and similarity present (%s pairs), skipping",
@@ -93,18 +121,31 @@ def main() -> int:
                     return 0
                 logger.info("boot: database empty, running full ingest")
 
-            client = OpenAlexClient(settings.openalex_mailto)
-            try:
-                with SessionLocal() as session:
-                    report = run_ingest(
+            if args.incremental:
+                client = OpenAlexClient(settings.openalex_mailto)
+                try:
+                    report = run_incremental_ingest(
                         session,
                         client,
                         topics,
-                        only_if_empty=args.only_if_empty,
                         verify_dois=not args.no_verify_dois,
+                        since_date=args.since,
                     )
-            finally:
-                client.close()
+                finally:
+                    client.close()
+            else:
+                client = OpenAlexClient(settings.openalex_mailto)
+                try:
+                    with SessionLocal() as session:
+                        report = run_ingest(
+                            session,
+                            client,
+                            topics,
+                            only_if_empty=args.only_if_empty,
+                            verify_dois=not args.no_verify_dois,
+                        )
+                finally:
+                    client.close()
             logger.info(
                 "fetched=%s papers=%s new=%s updated=%s authors=%s relations=%s "
                 "dois_checked=%s dois_replaced=%s dois_dropped=%s similarity_pairs=%s total_in_db=%s",

@@ -12,7 +12,7 @@ with a **Find Similar Papers** feature powered by TF-IDF vector similarity.
 | Backend    | FastAPI, SQLAlchemy 2.0, Alembic                  |
 | Database   | PostgreSQL 16                                     |
 | Similarity | scikit-learn `TfidfVectorizer` + cosine similarity |
-| Tests      | pytest (54 tests, SQLite in-memory, no network)   |
+| Tests      | pytest (69 tests, SQLite in-memory, no network)   |
 | Infra      | Docker Compose                                    |
 
 ## Quick start
@@ -34,6 +34,13 @@ On first boot the backend automatically:
 
 A guarded runner decides between *full ingest*, *similarity-only rebuild*, and *skip*
 on every boot, so restarts are safe and idempotent.
+
+A separate **scheduler sidecar** keeps the corpus current: it fetches only
+papers changed since each topic's watermark (`ingest_state` table) immediately
+at startup — catching up any churn while the stack was down — and then every
+`INGEST_INTERVAL_HOURS` (default 24). New papers are added, existing ones are
+refreshed in place, nothing duplicates, and a failed cycle is retried on the
+next tick without taking anything down.
 
 ## Data & ingestion
 
@@ -113,7 +120,7 @@ Top-5 similar papers, self-excluded by construction, scores rounded to 4 decimal
 docker compose exec backend python -m pytest
 ```
 
-54 tests, run against a per-test in-memory SQLite schema (hermetic, no network):
+69 tests, run against a per-test in-memory SQLite schema (hermetic, no network):
 similarity edge cases (empty corpus, single paper, zero vectors, duplicate
 titles, determinism), API endpoints (search/filters/pagination/404s/LIKE
 escaping), ingest idempotency (fake client fetched twice → 0 new rows), the
@@ -130,7 +137,7 @@ backend/
   app/schemas/      # Pydantic response models
   app/services/     # ingest, OpenAlex client, similarity
   alembic/          # migrations
-  scripts/          # ingest_openalex (--similarity-only, --boot)
+  scripts/          # ingest_openalex (--similarity-only, --boot, --incremental), scheduler
   tests/            # pytest suite
 frontend/
   app/              # Next.js pages (search, /papers/[id], 404)
@@ -150,4 +157,5 @@ frontend/
 | `OPENALEX_TOPIC_CV_ID`  | `T10531`                               |
 | `OPENALEX_TOPIC_LLM_ID` | `T10181`                               |
 | `INGEST_ON_BOOT`        | `true`                                 |
+| `INGEST_INTERVAL_HOURS` | `24`                                   |
 | `API_BASE_URL` (frontend) | `http://backend:8000`                |

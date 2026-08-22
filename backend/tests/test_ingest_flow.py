@@ -1,7 +1,14 @@
+import pytest
 from sqlalchemy import func, select
 
-from app.models import Paper, PaperSimilarity, Topic
-from app.services.ingest import resolve_boot_action, run_ingest, run_similarity_rebuild
+from app.models import IngestState, Paper, PaperSimilarity, Topic
+from app.services.ingest import (
+    backfill_watermarks,
+    resolve_boot_action,
+    run_incremental_ingest,
+    run_ingest,
+    run_similarity_rebuild,
+)
 from tests.helpers import add_author, add_paper, add_topic, make_work
 
 TOPICS = [
@@ -36,9 +43,13 @@ class FakeOpenAlexClient:
             "T10531": _works_for("T10531", "vision"),
             "T10181": _works_for("T10181", "language"),
         }
+        self.updates_by_topic: dict[str, list[dict]] = {}
 
     def fetch_topic_works(self, topic_id: str, from_date: str, max_papers: int) -> list[dict]:
         return self.by_topic[topic_id][:max_papers]
+
+    def fetch_updated_works(self, topic_id: str, from_date: str, max_papers: int) -> list[dict]:
+        return self.updates_by_topic.get(topic_id, [])[:max_papers]
 
 
 def test_ingest_populates_all_tables(session):
@@ -98,6 +109,20 @@ def test_boot_action_resolution():
     assert resolve_boot_action(0, 0) == "ingest"
     assert resolve_boot_action(5, 0) == "rebuild-similarity"
     assert resolve_boot_action(5, 10) == "skip"
+
+
+def test_backfill_watermarks_upgrades_static_database(session):
+    backfill_watermarks(session, TOPICS)
+    states = _watermarks(session)
+    assert set(states) == {"computer-vision", "large-language-models"}
+    assert all(s.last_incremental_at is not None for s in states.values())
+    assert all(s.last_full_ingest_at is None for s in states.values())
+
+    # idempotent: a second pass must not duplicate or reset rows
+    first_pass = {slug: s.last_incremental_at for slug, s in states.items()}
+    backfill_watermarks(session, TOPICS)
+    second = _watermarks(session)
+    assert {slug: s.last_incremental_at for slug, s in second.items()} == first_pass
 
 
 def test_boot_rebuild_fixes_missing_similarity(session):
@@ -171,3 +196,143 @@ def test_ingest_verifies_dois_and_drops_unresolvable(session, monkeypatch):
         select(Paper).where(Paper.openalex_id == "W-dead-1")
     )
     assert replaced.doi == "https://arxiv.org/abs/9999.99999"
+
+
+# --- incremental ingest ---
+
+
+def _watermarks(session):
+    session.expire_all()
+    return {
+        s.topic_slug: s
+        for s in session.scalars(select(IngestState)).all()
+    }
+
+
+def test_full_ingest_seeds_watermarks(session):
+    client = FakeOpenAlexClient()
+    run_ingest(session, client, TOPICS)
+
+    states = _watermarks(session)
+    assert set(states) == {"computer-vision", "large-language-models"}
+    assert all(s.last_full_ingest_at is not None for s in states.values())
+    assert all(s.last_incremental_at is not None for s in states.values())
+
+
+def test_incremental_requires_watermark(session):
+    client = FakeOpenAlexClient()
+    with pytest.raises(RuntimeError, match="watermark"):
+        run_incremental_ingest(session, client, TOPICS)
+
+
+def test_incremental_adds_new_and_updates_existing(session):
+    client = FakeOpenAlexClient()
+    run_ingest(session, client, TOPICS)
+    before_count = session.scalar(select(func.count()).select_from(Paper))
+
+    fresh = make_work(
+        "W-T10531-new-1",
+        "a freshly published vision paper",
+        year=2026,
+        abstract="novel vision transformer ideas attention",
+    )
+    changed = make_work(
+        "W-T10181-0",
+        "language paper number 0 on topic T10181",
+        cited_by_count=999_999,
+        abstract="abstract about language and neural approaches number 0 transformer attention convolutional",
+    )
+    client.updates_by_topic = {"T10531": [fresh], "T10181": [changed]}
+
+    report = run_incremental_ingest(session, client, TOPICS)
+
+    assert report.topics_fetched == {"computer-vision": 1, "large-language-models": 1}
+    assert report.papers == 2
+    assert report.papers_new == 1
+    assert report.papers_updated == 1
+    assert session.scalar(select(func.count()).select_from(Paper)) == before_count + 1
+
+    session.expire_all()
+    refreshed = session.scalar(select(Paper).where(Paper.openalex_id == "W-T10181-0"))
+    assert refreshed.cited_by_count == 999_999
+
+
+def test_incremental_advances_watermark(session):
+    client = FakeOpenAlexClient()
+    run_ingest(session, client, TOPICS)
+    original = {slug: s.last_incremental_at for slug, s in _watermarks(session).items()}
+
+    client.updates_by_topic = {
+        "T10531": [make_work("W-T10531-new-2", "another new vision paper")],
+        "T10181": [],
+    }
+    run_incremental_ingest(session, client, TOPICS)
+
+    after = {slug: s.last_incremental_at for slug, s in _watermarks(session).items()}
+    assert all(after[slug] > original[slug] for slug in original)
+
+
+def test_incremental_is_idempotent(session):
+    client = FakeOpenAlexClient()
+    run_ingest(session, client, TOPICS)
+    client.updates_by_topic = {
+        "T10531": [make_work("W-T10531-inc-1", "an incremental vision paper")],
+        "T10181": [],
+    }
+
+    first = run_incremental_ingest(session, client, TOPICS)
+    second = run_incremental_ingest(session, client, TOPICS)
+
+    assert first.papers_new == 1
+    assert second.papers_new == 0
+    assert second.papers_updated == 1
+    assert second.papers_in_db == first.papers_in_db
+    assert second.relations == 0
+
+
+def test_incremental_empty_delta_still_commits_watermark(session):
+    client = FakeOpenAlexClient()
+    run_ingest(session, client, TOPICS)
+    original = {slug: s.last_incremental_at for slug, s in _watermarks(session).items()}
+
+    client.updates_by_topic = {"T10531": [], "T10181": []}
+    report = run_incremental_ingest(session, client, TOPICS)
+
+    assert report.papers == 0
+    assert report.similarity_pairs == 0
+    after = {slug: s.last_incremental_at for slug, s in _watermarks(session).items()}
+    assert all(after[slug] > original[slug] for slug in original)
+
+
+def test_incremental_since_overrides_watermark(session):
+    client = FakeOpenAlexClient()
+    run_ingest(session, client, TOPICS)
+
+    client.updates_by_topic = {
+        "T10531": [make_work("W-T10531-backfill", "a backfilled vision paper")],
+        "T10181": [],
+    }
+    report = run_incremental_ingest(session, client, TOPICS, since_date="2020-01-01")
+
+    assert report.papers == 1
+    assert report.papers_new == 1
+
+
+def test_cross_topic_duplicate_keeps_both_topics(session):
+    """Regression: a work fetched under both topics must belong to both."""
+    client = FakeOpenAlexClient()
+    shared = make_work(
+        "W-shared-1",
+        "a paper relevant to both topics",
+        year=2024,
+        abstract="shared attention text relevant everywhere",
+    )
+    client.by_topic["T10531"].append(shared)
+    client.by_topic["T10181"].append(dict(shared))
+
+    report = run_ingest(session, client, TOPICS)
+    assert report.papers == 2 * PER_TOPIC + 1
+
+    paper = session.scalar(select(Paper).where(Paper.openalex_id == "W-shared-1"))
+    assert paper is not None
+    assert {t.slug for t in paper.topics} == {"computer-vision", "large-language-models"}

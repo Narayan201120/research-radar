@@ -108,6 +108,46 @@ def test_fetch_stops_when_cursor_exhausted():
     client.close()
 
 
+def test_fetch_updated_works_requests_updated_filter_and_sort():
+    captured = {}
+
+    def handler(request):
+        captured["params"] = request.url.params
+        return httpx.Response(
+            200,
+            json={"meta": {"next_cursor": None}, "results": [{"id": "W9"}]},
+        )
+
+    client = OpenAlexClient("me@example.com", transport=httpx.MockTransport(handler))
+    works = client.fetch_updated_works("T10181", "2026-08-21", max_papers=50)
+    assert [w["id"] for w in works] == ["W9"]
+    assert captured["params"]["filter"] == "topics.id:T10181,from_updated_date:2026-08-21"
+    assert captured["params"]["sort"] == "updated_date:desc"
+    assert captured["params"]["cursor"] == "*"
+    assert captured["params"]["mailto"] == "me@example.com"
+    client.close()
+
+
+def test_fetch_updated_works_paginates_with_cursor_and_caps():
+    pages = iter(
+        [
+            {"meta": {"next_cursor": "p2"}, "results": [{"id": "W1"}, {"id": "W2"}]},
+            {"meta": {"next_cursor": None}, "results": [{"id": "W3"}, {"id": "W4"}]},
+        ]
+    )
+    cursors = []
+
+    def handler(request):
+        cursors.append(request.url.params["cursor"])
+        return httpx.Response(200, json=next(pages))
+
+    client = OpenAlexClient("me@example.com", transport=httpx.MockTransport(handler))
+    results = client.fetch_updated_works("T10531", "2026-08-01", max_papers=3)
+    assert [r["id"] for r in results] == ["W1", "W2", "W3"]
+    assert cursors == ["*", "p2"]
+    client.close()
+
+
 def test_retries_then_raises_on_persistent_http_error():
     attempts = {"n": 0}
 
