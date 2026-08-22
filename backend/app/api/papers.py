@@ -1,7 +1,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_db
@@ -19,6 +19,40 @@ DbSession = Annotated[Session, Depends(get_db)]
 
 MAX_PAGE_SIZE = 100
 SIMILAR_LIMIT = 5
+
+_ANN_SIMILAR_SQL = text(
+    """
+    SELECT pe.paper_id AS similar_paper_id,
+           p.title,
+           1 - (pe.embedding <=> self.embedding) AS similarity_score
+    FROM paper_embedding self
+    JOIN paper_embedding pe ON pe.paper_id <> self.paper_id
+    JOIN paper p ON p.id = pe.paper_id
+    WHERE self.paper_id = :paper_id
+    ORDER BY pe.embedding <=> self.embedding, pe.paper_id ASC
+    LIMIT :limit
+    """
+)
+
+
+def _similar_via_vectors(db: Session, paper_id: int) -> list[SimilarItem] | None:
+    """HNSW-backed neighbors; ``None`` signals the paper has no stored vector."""
+    has_self_vector = db.execute(
+        text("SELECT 1 FROM paper_embedding WHERE paper_id = :pid"),
+        {"pid": paper_id},
+    ).first()
+    if has_self_vector is None:
+        return None
+    items = [
+        SimilarItem(
+            id=row.similar_paper_id,
+            title=row.title,
+            similarity_score=round(float(row.similarity_score), 4),
+        )
+        for row in db.execute(_ANN_SIMILAR_SQL, {"paper_id": paper_id, "limit": SIMILAR_LIMIT})
+        if float(row.similarity_score) > 0
+    ]
+    return items
 
 
 def _escape_like(value: str) -> str:
@@ -108,6 +142,11 @@ def get_similar_papers(paper_id: str, db: DbSession) -> list[SimilarItem]:
     exists = db.scalar(select(Paper.id).where(Paper.id == raw))
     if exists is None:
         raise HTTPException(status_code=404, detail="Paper not found")
+
+    if db.get_bind().dialect.name == "postgresql":
+        vector_items = _similar_via_vectors(db, raw)
+        if vector_items is not None:
+            return vector_items
 
     rows = db.execute(
         select(

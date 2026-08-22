@@ -217,6 +217,32 @@ def test_similar_returns_empty_for_paper_without_neighbors(client, session):
     assert body == []
 
 
+def test_similar_falls_back_to_snapshot_where_vector_sql_unsupported(client, session):
+    """Documents the dialect guard: on SQLite (no <=> operator) a stored vector
+    is ignored and the legacy snapshot serves the response unchanged."""
+    from sqlalchemy import text as sql_text
+
+    data = _seed(client, session)
+    session.execute(
+        sql_text(
+            "INSERT INTO paper_embedding (paper_id, embedding) VALUES (:pid, :emb)"
+        ),
+        {"pid": data["attention"].id, "emb": "[0.1,0.2]"},
+    )
+    session.commit()
+
+    similar = client.get(f"/papers/{data['attention'].id}/similar")
+    assert similar.status_code == 200
+    body = similar.json()
+    assert body[0]["similarity_score"] == 0.8765  # legacy snapshot values
+    assert body[0]["id"] == data["llama"].id
+
+
+def test_similar_404s_before_any_vector_lookup(client, session):
+    assert client.get("/papers/999999/similar").status_code == 404
+    assert client.get("/papers/abc/similar").status_code == 404
+
+
 def test_health_ok(client):
     response = client.get("/health")
     assert response.status_code == 200
