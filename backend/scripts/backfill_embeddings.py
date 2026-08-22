@@ -17,11 +17,18 @@ import argparse
 import logging
 import sys
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from app.core.settings import get_settings
 from app.db.session import SessionLocal
-from app.services.embeddings import EmbeddingProvider, FastEmbedProvider, HashingFakeProvider
+from app.models import Paper
+from app.services.embeddings import (
+    EmbeddingProvider,
+    FastEmbedProvider,
+    HashingFakeProvider,
+    paper_text,
+    upsert_embeddings,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("backfill")
@@ -49,15 +56,6 @@ def _count_missing_sql() -> str:
     """
 
 
-def _paper_text(title: str | None, abstract: str | None) -> str:
-    parts = [part.strip() for part in (title, abstract) if part and part.strip()]
-    return " ".join(parts)
-
-
-def _vector_literal(vector: list[float]) -> str:
-    return "[" + ",".join(f"{component:.7g}" for component in vector) + "]"
-
-
 def run_backfill(
     session,
     provider: EmbeddingProvider,
@@ -70,15 +68,8 @@ def run_backfill(
         rows = session.execute(text(_select_batch_sql()), {"limit": batch_size}).all()
         if not rows:
             break
-        vectors = provider.embed_texts([_paper_text(r.title, r.abstract) for r in rows])
-        for row, vector in zip(rows, vectors):
-            session.execute(
-                text(
-                    "INSERT INTO paper_embedding (paper_id, embedding) "
-                    "VALUES (:pid, :emb) ON CONFLICT (paper_id) DO NOTHING"
-                ),
-                {"pid": row.id, "emb": _vector_literal(vector)},
-            )
+        vectors = provider.embed_texts([paper_text(r.title, r.abstract) for r in rows])
+        upsert_embeddings(session, [(row.id, vector) for row, vector in zip(rows, vectors)])
         session.commit()
         embedded_total += len(rows)
         logger.info("embedded %s papers (%s this batch)", embedded_total, len(rows))

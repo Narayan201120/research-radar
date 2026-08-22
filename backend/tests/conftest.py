@@ -1,7 +1,7 @@
 import app.models  # noqa: F401  register all tables on Base.metadata
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -15,7 +15,9 @@ def db():
     """A fresh in-memory SQLite schema for every test (hermetic isolation).
 
     StaticPool + check_same_thread=False lets TestClient's ASGI thread share the
-    single in-memory connection.
+    single in-memory connection. ``paper_embedding`` is created via raw DDL
+    (vector-typed on Postgres; plain TEXT here) so ingest-path embedding writes
+    run unguarded on both dialects.
     """
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
@@ -23,6 +25,14 @@ def db():
         connect_args={"check_same_thread": False},
     )
     Base.metadata.create_all(engine)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS paper_embedding ("
+                "paper_id INTEGER PRIMARY KEY REFERENCES paper(id) ON DELETE CASCADE, "
+                "embedding TEXT NOT NULL)"
+            )
+        )
     testing = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
     yield engine, testing
     engine.dispose()

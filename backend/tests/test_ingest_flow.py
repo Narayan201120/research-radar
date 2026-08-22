@@ -1,7 +1,8 @@
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 from app.models import IngestState, Paper, PaperSimilarity, Topic
+from app.services.embeddings import HashingFakeProvider
 from app.services.ingest import (
     backfill_watermarks,
     resolve_boot_action,
@@ -336,3 +337,48 @@ def test_cross_topic_duplicate_keeps_both_topics(session):
     paper = session.scalar(select(Paper).where(Paper.openalex_id == "W-shared-1"))
     assert paper is not None
     assert {t.slug for t in paper.topics} == {"computer-vision", "large-language-models"}
+
+
+# --- embeddings mode ---
+
+
+def test_full_ingest_embeds_all_and_skips_snapshot(session):
+    client = FakeOpenAlexClient()
+    report = run_ingest(
+        session,
+        client,
+        TOPICS,
+        embedding_provider=HashingFakeProvider(dim=8),
+    )
+
+    assert report.embedded == 2 * PER_TOPIC
+    assert report.similarity_pairs == 0
+    count = session.execute(text("SELECT count(*) FROM paper_embedding")).scalar_one()
+    assert count == 2 * PER_TOPIC
+
+
+def test_incremental_embeds_only_text_changed_papers(session):
+    client = FakeOpenAlexClient()
+    run_ingest(session, client, TOPICS)  # legacy baseline
+
+    fresh = make_work("W-T10531-new-9", "a brand new vision paper")
+    citation_bump = make_work(
+        "W-T10181-3",
+        "language paper number 3 on topic T10181",
+        cited_by_count=12345,
+        abstract=(
+            "abstract about language and neural approaches number 3 "
+            "transformer attention convolutional"
+        ),
+    )
+    client.updates_by_topic = {"T10531": [fresh], "T10181": [citation_bump]}
+
+    report = run_incremental_ingest(
+        session,
+        client,
+        TOPICS,
+        embedding_provider=HashingFakeProvider(dim=8),
+    )
+
+    assert report.papers == 2  # both upserted...
+    assert report.embedded == 1  # ...but the citation bump alone keeps its vector

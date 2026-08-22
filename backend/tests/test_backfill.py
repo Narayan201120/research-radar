@@ -1,35 +1,23 @@
 import pytest
 from sqlalchemy import text
 
-from app.services.embeddings import HashingFakeProvider
-from scripts.backfill_embeddings import _paper_text, _vector_literal, run_backfill
-
-_PAPER_EMBEDDING_DDL = (
-    "CREATE TABLE paper_embedding ("
-    "paper_id INTEGER PRIMARY KEY REFERENCES paper(id) ON DELETE CASCADE, "
-    "embedding TEXT NOT NULL)"
-)
-
-
-@pytest.fixture()
-def pg_like_schema(session):
-    session.execute(text(_PAPER_EMBEDDING_DDL))
-    session.commit()
+from app.services.embeddings import HashingFakeProvider, paper_text, vector_literal
+from scripts.backfill_embeddings import run_backfill
 
 
 def test_paper_text_joins_and_skips_empty():
-    assert _paper_text("A Title", "An abstract") == "A Title An abstract"
-    assert _paper_text("A Title", None) == "A Title"
-    assert _paper_text("   ", "") == ""
-    assert _paper_text(None, None) == ""
+    assert paper_text("A Title", "An abstract") == "A Title An abstract"
+    assert paper_text("A Title", None) == "A Title"
+    assert paper_text("   ", "") == ""
+    assert paper_text(None, None) == ""
 
 
 def test_vector_literal_formatting():
-    literal = _vector_literal([0.5, -1.0, 1e-07])
+    literal = vector_literal([0.5, -1.0, 1e-07])
     assert literal == "[0.5,-1,1e-07]"
 
 
-def test_run_backfill_embeds_each_missing_paper_once(session, pg_like_schema):
+def test_run_backfill_embeds_each_missing_paper_once(session):
     from sqlalchemy import func
 
     from tests.helpers import add_paper

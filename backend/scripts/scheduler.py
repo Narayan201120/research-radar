@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 
 from app.core.settings import get_settings
 from app.db.session import SessionLocal
+from app.services.embeddings import FastEmbedProvider
 from app.services.ingest import IngestReport, run_incremental_ingest
 from app.services.openalex import OpenAlexClient
 from scripts.ingest_openalex import _topics
@@ -43,10 +44,17 @@ def run_once(
     topics: list[tuple[str, str, str]],
     session: Session,
     client: OpenAlexClient,
+    embedding_provider=None,
 ) -> IngestReport | None:
     """One incremental attempt; failures are logged and absorbed."""
     try:
-        report = run_incremental_ingest(session, client, topics, verify_dois=True)
+        report = run_incremental_ingest(
+            session,
+            client,
+            topics,
+            verify_dois=True,
+            embedding_provider=embedding_provider,
+        )
     except Exception as exc:
         logger.error("incremental run failed: %s", exc)
         return None
@@ -64,6 +72,11 @@ def main() -> int:
     settings = get_settings()
     interval_seconds = max(MIN_INTERVAL_SECONDS, settings.ingest_interval_hours * 3600.0)
     topics = _topics(settings)
+    embedding_provider = (
+        FastEmbedProvider(settings.embedding_model_name)
+        if settings.similarity_backend == "embeddings"
+        else None
+    )
 
     _install_signal_handlers()
     logger.info(
@@ -75,7 +88,7 @@ def main() -> int:
         client = OpenAlexClient(settings.openalex_mailto)
         try:
             with SessionLocal() as session:
-                run_once(topics, session, client)
+                run_once(topics, session, client, embedding_provider)
         finally:
             client.close()
         logger.info("sleeping %.1f minutes until next run", interval_seconds / 60.0)

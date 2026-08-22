@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Author, IngestState, Paper, PaperAuthor, PaperSimilarity, PaperTopic, Topic
 from app.services.doi_checker import verify_works
+from app.services.embeddings import EmbeddingProvider, embed_papers_by_ids
 from app.services.openalex import OpenAlexClient, reconstruct_abstract
 from app.services.similarity import build_tfidf_matrix, find_top_similar
 
@@ -40,6 +41,7 @@ class IngestReport:
     authors: int = 0
     relations: int = 0
     similarity_pairs: int = 0
+    embedded: int = 0
     papers_in_db: int = 0
     fell_back_to: str | None = None
     dois_checked: int = 0
@@ -146,15 +148,24 @@ def _apply_normalized_works(
     normalized: dict[str, dict],
     topic_rows: dict[str, Topic],
     report: IngestReport,
-) -> None:
-    """Upsert papers (assign ids via flush), then authors and junction rows."""
+) -> set[int]:
+    """Upsert papers (assign ids via flush), then authors and junction rows.
+
+    Returns ids of papers whose embedded text changed — new papers plus any
+    whose title or abstract was edited. Citation-count/DOI/year bumps keep
+    their existing vector.
+    """
     papers_by_openalex: dict[str, Paper] = {}
+    touched_openalex: set[str] = set()
     for openalex_id, data in normalized.items():
         paper = session.scalar(select(Paper).where(Paper.openalex_id == openalex_id))
         is_new = paper is None
         if is_new:
             paper = Paper(openalex_id=openalex_id)
             session.add(paper)
+            touched_openalex.add(openalex_id)
+        elif paper.title != data["title"] or paper.abstract != data["abstract"]:
+            touched_openalex.add(openalex_id)
         paper.title = data["title"]
         paper.abstract = data["abstract"]
         paper.publication_year = data["publication_year"]
@@ -202,6 +213,7 @@ def _apply_normalized_works(
                 report.relations += 1
 
     report.authors = len(author_rows)
+    return {papers_by_openalex[oid].id for oid in touched_openalex}
 
 
 def _seed_watermarks(session: Session, topics: list[tuple[str, str, str]]) -> None:
@@ -228,6 +240,7 @@ def run_ingest(
     only_if_empty: bool = False,
     verify_dois: bool = False,
     doi_transport: httpx.BaseTransport | None = None,
+    embedding_provider: EmbeddingProvider | None = None,
 ) -> IngestReport:
     """Upsert papers/authors/topics + rebuild junctions inside one transaction.
 
@@ -236,6 +249,9 @@ def run_ingest(
     definitively dead (404/410) and has no resolving alternate landing page
     are dropped before normalization. doi_transport overrides the HTTP
     transport (tests).
+    embedding_provider: non-None selects embeddings mode — touched papers get
+    vectors and the TF-IDF snapshot rebuild is skipped; None keeps legacy
+    behavior exactly.
     """
     report = IngestReport()
 
@@ -283,10 +299,14 @@ def run_ingest(
     report.papers = total
 
     # 4-5. Upsert papers, authors, and junction rows
-    _apply_normalized_works(session, normalized, topic_rows, report)
+    touched_ids = _apply_normalized_works(session, normalized, topic_rows, report)
 
-    # 6. Rebuild the similarity snapshot in the same transaction
-    report.similarity_pairs = rebuild_similarity(session)
+    if embedding_provider is not None:
+        # embeddings mode: vectors only, no TF-IDF snapshot rebuild
+        report.embedded = embed_papers_by_ids(session, embedding_provider, sorted(touched_ids))
+    else:
+        # 6. Rebuild the TF-IDF snapshot in the same transaction
+        report.similarity_pairs = rebuild_similarity(session)
     _seed_watermarks(session, topics)
     session.commit()
 
@@ -304,6 +324,7 @@ def run_incremental_ingest(
     doi_transport: httpx.BaseTransport | None = None,
     max_papers_per_topic: int = INCREMENTAL_MAX_PER_TOPIC,
     since_date: str | None = None,
+    embedding_provider: EmbeddingProvider | None = None,
 ) -> IngestReport:
     """Fetch works changed since each topic's watermark and upsert them.
 
@@ -314,7 +335,9 @@ def run_incremental_ingest(
     as the data, so a crash rolls both back and nothing is missed next run.
     Day-level filter granularity means same-day churn can be refetched;
     upsert-by-openalex-id makes that safe. ``since_date`` (YYYY-MM-DD)
-    overrides the stored watermark for manual backfills.
+    overrides the stored watermark for manual backfills. ``embedding_provider``
+    non-None selects embeddings mode: only text-changed papers are embedded
+    and the TF-IDF snapshot rebuild is skipped.
     """
     report = IngestReport()
     started_at = datetime.now(timezone.utc)
@@ -351,8 +374,11 @@ def run_incremental_ingest(
     report.papers = len(normalized)
 
     if normalized:
-        _apply_normalized_works(session, normalized, topic_rows, report)
-        report.similarity_pairs = rebuild_similarity(session)
+        touched_ids = _apply_normalized_works(session, normalized, topic_rows, report)
+        if embedding_provider is not None:
+            report.embedded = embed_papers_by_ids(session, embedding_provider, sorted(touched_ids))
+        else:
+            report.similarity_pairs = rebuild_similarity(session)
 
     for state in states.values():
         state.last_incremental_at = started_at

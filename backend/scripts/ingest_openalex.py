@@ -41,6 +41,7 @@ from app.services.ingest import (
     run_similarity_rebuild,
 )
 from app.services.openalex import OpenAlexClient
+from app.services.embeddings import FastEmbedProvider
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("ingest")
@@ -95,6 +96,11 @@ def main() -> int:
 
     settings = get_settings()
     topics = _topics(settings)
+    embedding_provider = (
+        FastEmbedProvider(settings.embedding_model_name)
+        if settings.similarity_backend == "embeddings"
+        else None
+    )
 
     try:
         with SessionLocal() as session:
@@ -130,6 +136,7 @@ def main() -> int:
                         topics,
                         verify_dois=not args.no_verify_dois,
                         since_date=args.since,
+                        embedding_provider=embedding_provider,
                     )
                 finally:
                     client.close()
@@ -143,6 +150,7 @@ def main() -> int:
                             topics,
                             only_if_empty=args.only_if_empty,
                             verify_dois=not args.no_verify_dois,
+                            embedding_provider=embedding_provider,
                         )
                 finally:
                     client.close()
