@@ -1,9 +1,16 @@
 import asyncio
 import json
+import sys
+from pathlib import Path
+
 import httpx
 import psycopg
 
-DSN = "postgresql://research:research@postgres:5432/research_radar"
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from app.core.settings import get_settings  # noqa: E402
+
+DSN = get_settings().database_url.replace("postgresql+psycopg://", "postgresql://")
 
 
 async def main():

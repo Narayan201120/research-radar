@@ -215,3 +215,27 @@ def test_similar_returns_empty_for_paper_without_neighbors(client, session):
     data = _seed(client, session)
     body = client.get(f"/papers/{data['llama'].id}/similar").json()
     assert body == []
+
+
+def test_health_ok(client):
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "database": "ok"}
+
+
+def test_health_reports_503_when_database_unreachable(client):
+    from app.api.deps import get_db
+    from app.main import app
+
+    class _DeadSession:
+        def execute(self, *_args, **_kwargs):
+            raise RuntimeError("connection refused")
+
+    app.dependency_overrides[get_db] = lambda: _DeadSession()
+    try:
+        response = client.get("/health")
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert response.status_code == 503
+    assert response.json() == {"status": "unhealthy", "database": "unreachable"}
