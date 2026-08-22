@@ -1,6 +1,12 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    # ParadeDB bundles pgvector + pg_search (BM25) on PostgreSQL 16.
+    # Pin a -pg16 tag explicitly: floating `latest` ships PG18, which cannot
+    # open this project's PG16 data volume.
+    image: paradedb/paradedb:0.25.3-pg16
+    # pg_search must be preloaded; the flag keeps this independent of whatever
+    # postgresql.conf lives inside a volume initialized by an older image.
+    command: ["postgres", "-c", "shared_preload_libraries=pg_search"]
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-research}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-research}
