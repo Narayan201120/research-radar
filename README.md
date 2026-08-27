@@ -8,7 +8,7 @@ with **BM25 ranked search** and **Find Similar Papers** powered by semantic embe
 
 | Layer      | Technology |
 | ---------- | ---------- |
-| Frontend   | Next.js 14 (App Router), React 18, Tailwind CSS |
+| Frontend   | Next.js 16 (App Router, Turbopack), React 19, Tailwind CSS |
 | Backend    | FastAPI, SQLAlchemy 2.0, Alembic |
 | Database   | PostgreSQL 16 via `paradedb/paradedb:0.25.3-pg16` (pgvector + pg_search BM25, single image) |
 | Search     | ParadeDB BM25 (`paper_search_idx` on `title`+`abstract`, `paradedb.score` ranking) with ILIKE fallback; `?ranked=true` opts into relevance ordering |

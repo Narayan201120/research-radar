@@ -8,15 +8,20 @@ interface HomeSearchParams {
   page?: string;
 }
 
-export default function HomePage({ searchParams }: { searchParams: HomeSearchParams }) {
+export default async function HomePage({
+  searchParams,
+}: {
+  searchParams: Promise<HomeSearchParams>;
+}) {
+  const params = await searchParams;
   return (
     <main className="min-h-screen bg-slate-50">
       <SearchExplorer
-        initialQ={searchParams.q ?? ""}
-        initialYear={searchParams.year ?? ""}
-        initialTopic={searchParams.topic ?? ""}
-        initialAuthor={searchParams.author ?? ""}
-        initialPage={Math.max(1, Number(searchParams.page) || 1)}
+        initialQ={params.q ?? ""}
+        initialYear={params.year ?? ""}
+        initialTopic={params.topic ?? ""}
+        initialAuthor={params.author ?? ""}
+        initialPage={Math.max(1, Number(params.page) || 1)}
       />
     </main>
   );

@@ -7,12 +7,13 @@ export const revalidate = 60;
 export default async function PaperDetailPage({
   params,
 }: {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }) {
-  const paper = await fetchPaper(params.id).catch(() => null);
+  const { id } = await params;
+  const paper = await fetchPaper(id).catch(() => null);
   if (!paper) notFound();
 
-  const similar = await fetchSimilar(params.id).catch(() => []);
+  const similar = await fetchSimilar(id).catch(() => []);
 
   return (
     <main className="min-h-screen bg-slate-50">
