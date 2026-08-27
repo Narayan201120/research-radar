@@ -13,7 +13,7 @@ with **BM25 ranked search** and **Find Similar Papers** powered by semantic embe
 | Database   | PostgreSQL 16 via `paradedb/paradedb:0.25.3-pg16` (pgvector + pg_search BM25, single image) |
 | Search     | ParadeDB BM25 (`paper_search_idx` on `title`+`abstract`, `paradedb.score` ranking) with ILIKE fallback; `?ranked=true` opts into relevance ordering |
 | Similarity | Dual-path: semantic `paper_embedding` (384-d `all-MiniLM-L6-v2` via fastembed ONNX, HNSW `vector_cosine_ops`, ANN at read time) with legacy TF-IDF `paper_similarity` snapshot fallback — contract unchanged, vectors win when present |
-| Tests      | pytest (85 tests, SQLite in-memory hermetic + Postgres-marked integration gate in CI) |
+| Tests      | pytest (90 tests: 85 SQLite hermetic + 5 Postgres integration gated on ParadeDB — `pytest -m postgres`) |
 | Infra      | Docker Compose (postgres + backend + frontend + scheduler sidecar) |
 
 ## Quick start
@@ -135,19 +135,21 @@ Top-5 similar papers, self-excluded by construction, scores rounded to 4 decimal
 ## Tests
 
 ```bash
-docker compose exec backend python -m pytest        # hermetic SQLite suite
-python -m pytest -q                                 # same, from backend/ with local venv
+docker compose exec backend python -m pytest        # all hermetic + live gate (90 tests)
+python -m pytest -q                                 # hermetic from backend/ with local venv (85, 5 skipped without Docker)
+python -m pytest -m postgres -q                     # Postgres gate only (5 tests, requires ParadeDB)
 ```
 
-85 tests, hermetic per-test in-memory SQLite schema (no network): similarity edge
-cases (empty corpus, single paper, zero vectors, duplicate titles, determinism),
-API endpoints (search/filters/pagination/404s/LIKE escaping, `?ranked` validation
-and dialect-guard degradation), `similar` dialect guard (SQLite falls back to
+90 tests: 85 hermetic per-test in-memory SQLite schema (no network) + 5
+Postgres/ParadeDB integration — similarity edge cases, API endpoints
+(search/filters/pagination/404s/LIKE escaping, `?ranked` validation and
+dialect-guard degradation), `similar` dialect guard (SQLite falls back to
 snapshot even with a stored vector), ingest idempotency (fake client fetched
-twice → 0 new rows), the real OpenAlex client (httpx `MockTransport`), abstract
-reconstruction, and the DOI verifier. Postgres-marked integration suite
-(`@pytest.mark.postgres`, ParadeDB service container in CI) is the gate for
-BM25 relevance and ANN similarity assertions.
+twice → 0 new rows), the real OpenAlex client (httpx `MockTransport`),
+abstract reconstruction, DOI verifier, and live BM25 relevance + ANN similarity
+(`tests/test_postgres.py`, `HashingFakeProvider`, TRUNCATE per test).
+Hermetic stays green without Docker (5 skipped); CI `services: postgres`
+(`paradedb/paradedb:0.25.3-pg16`) runs both steps for 90 passed.
 
 ## Repository layout
 

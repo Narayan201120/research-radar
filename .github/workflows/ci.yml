@@ -36,8 +36,10 @@ jobs:
           cache-dependency-path: backend/requirements.txt
       - name: Install pinned dependencies
         run: pip install -r requirements.txt
-      - name: Run test suite
-        run: python -m pytest
+      - name: Run hermetic suite (SQLite)
+        run: python -m pytest -q
+      - name: Run Postgres integration gate (ParadeDB BM25 + pgvector ANN)
+        run: python -m pytest -m postgres -q
 
   frontend:
     runs-on: ubuntu-latest
