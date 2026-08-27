@@ -182,6 +182,7 @@ frontend/
 | `OPENALEX_TOPIC_LLM_ID` | `T10181` |
 | `INGEST_ON_BOOT`        | `true` |
 | `INGEST_INTERVAL_HOURS` | `24` |
+| `SCHEDULER_RETRY_MINUTES` | `5` (short retry after failed incremental ingest; else waits `INGEST_INTERVAL_HOURS`) |
 | `SIMILARITY_BACKEND`    | `embeddings` (`embeddings` default; `tfidf` via env no longer has code — revert via `git revert`) |
 | `EMBEDDING_MODEL_NAME`  | `sentence-transformers/all-MiniLM-L6-v2` (384-d, baked into image at `/app/.fastembed`) |
 | `API_BASE_URL` (frontend) | `http://backend:8000` |

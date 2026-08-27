@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     openalex_topic_cv_id: str = "T10531"
     openalex_topic_llm_id: str = "T10181"
     ingest_interval_hours: float = 24.0
+    scheduler_retry_minutes: float = 5.0
     embedding_model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
     similarity_backend: str = "embeddings"  # tfidf | embeddings (default semantic; tfidf via env for revert)
 

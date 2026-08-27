@@ -71,6 +71,7 @@ def run_once(
 def main() -> int:
     settings = get_settings()
     interval_seconds = max(MIN_INTERVAL_SECONDS, settings.ingest_interval_hours * 3600.0)
+    retry_seconds = max(MIN_INTERVAL_SECONDS, settings.scheduler_retry_minutes * 60.0)
     topics = _topics(settings)
     embedding_provider = (
         FastEmbedProvider(settings.embedding_model_name)
@@ -80,19 +81,27 @@ def main() -> int:
 
     _install_signal_handlers()
     logger.info(
-        "scheduler started: incremental ingest every %.1f h (stop with SIGTERM)",
+        "scheduler started: incremental ingest every %.1f h, retry %.1f m on failure (stop with SIGTERM)",
         interval_seconds / 3600.0,
+        retry_seconds / 60.0,
     )
 
     while not _stop.is_set():
         client = OpenAlexClient(settings.openalex_mailto)
+        success = False
         try:
             with SessionLocal() as session:
-                run_once(topics, session, client, embedding_provider)
+                report = run_once(topics, session, client, embedding_provider)
+                success = report is not None
         finally:
             client.close()
-        logger.info("sleeping %.1f minutes until next run", interval_seconds / 60.0)
-        if _stop.wait(timeout=interval_seconds):
+        sleep_seconds = interval_seconds if success else retry_seconds
+        logger.info(
+            "sleeping %.1f minutes until next %s",
+            sleep_seconds / 60.0,
+            "run" if success else "retry",
+        )
+        if _stop.wait(timeout=sleep_seconds):
             break
 
     logger.info("scheduler stopped")
