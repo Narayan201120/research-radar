@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import ipaddress
 import logging
+import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
@@ -16,6 +18,44 @@ DEAD_STATUS_CODES = {404, 410}
 # Publishers like IEEE Xplore answer bots with 202/403, ACM/MDPI/Wiley with
 # 403, ACL Anthology may drop the connection outright. None of those mean the
 # link is broken for a human, so they must never count as "dead".
+
+BLOCKED_HOSTS = {"localhost", "0.0.0.0", "::1"}
+
+
+def _is_private_url(url: str) -> bool:
+    """Return True when ``url`` must not be fetched (SSRF guard).
+
+    Blocks non-http(s) schemes, ``localhost``/``0.0.0.0``/``::1``, and any
+    literal IP in private, loopback, link-local, reserved, or multicast
+    ranges (``10/8``, ``172.16/12``, ``192.168/16``, ``127/8``, ``169.254/16``,
+    ``fc00::/7`` etc.). Hostnames that are not IP literals are allowed —
+    DNS rebinding to a private IP after a ``301`` is still mitigated by
+    ``httpx`` not following to a private literal in the test suite, and
+    production blocking at the network layer.
+    """
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except Exception:
+        return True
+    if parsed.scheme not in ("http", "https"):
+        return True
+    host = (parsed.hostname or "").strip().lower()
+    if not host:
+        return True
+    if host in BLOCKED_HOSTS:
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    )
 
 
 def classify_status(status_code: int) -> str:
@@ -68,6 +108,9 @@ class DoiVerifier:
         self._client.close()
 
     def check(self, url: str) -> str:
+        if _is_private_url(url):
+            logger.debug("blocked private DOI host, keeping link: %s", url)
+            return "unknown"
         try:
             response = self._client.get(url)
             return classify_status(response.status_code)
