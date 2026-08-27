@@ -17,6 +17,8 @@ class Paper(Base):
     publication_year: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     doi: Mapped[str | None] = mapped_column(String(255), nullable=True)
     cited_by_count: Mapped[int] = mapped_column(nullable=False, default=0)
+    abstract_source: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    abstract_recovered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

@@ -41,6 +41,7 @@ class IngestReport:
     relations: int = 0
     similarity_pairs: int = 0  # retained for log compat; always 0 post cutover
     embedded: int = 0
+    recovered_abstracts: int = 0
     papers_in_db: int = 0
     fell_back_to: str | None = None
     dois_checked: int = 0
@@ -276,6 +277,14 @@ def run_ingest(
 
     if embedding_provider is not None:
         report.embedded = embed_papers_by_ids(session, embedding_provider, sorted(touched_ids))
+        try:
+            from app.services.abstract_recovery import recover_missing_abstracts
+
+            report.recovered_abstracts = recover_missing_abstracts(
+                session, limit=20, embedding_provider=embedding_provider
+            )
+        except Exception as exc:
+            logger.warning("abstract recovery during ingest skipped: %s", exc)
     _seed_watermarks(session, topics)
     session.commit()
 
@@ -329,6 +338,16 @@ def run_incremental_ingest(
         touched_ids = _apply_normalized_works(session, normalized, topic_rows, report)
         if embedding_provider is not None:
             report.embedded = embed_papers_by_ids(session, embedding_provider, sorted(touched_ids))
+
+    if embedding_provider is not None:
+        try:
+            from app.services.abstract_recovery import recover_missing_abstracts
+
+            report.recovered_abstracts = recover_missing_abstracts(
+                session, limit=20, embedding_provider=embedding_provider
+            )
+        except Exception as exc:
+            logger.warning("abstract recovery during incremental skipped: %s", exc)
 
     for state in states.values():
         state.last_incremental_at = started_at
