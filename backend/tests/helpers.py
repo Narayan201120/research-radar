@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 
-from app.models import Author, Paper, PaperAuthor, PaperSimilarity, PaperTopic, Topic
+from app.models import Author, Paper, PaperAuthor, PaperTopic, Topic
 
 
 def add_topic(session: Session, slug: str, *, name: str | None = None, openalex_id: str | None = None) -> Topic:
@@ -46,16 +46,6 @@ def add_paper(
     for topic in topics or []:
         session.add(PaperTopic(paper_id=paper.id, topic_id=topic.id))
     return paper
-
-
-def add_similarity(session: Session, paper_id: int, similar_paper_id: int, score: float) -> None:
-    session.add(
-        PaperSimilarity(
-            paper_id=paper_id,
-            similar_paper_id=similar_paper_id,
-            similarity_score=score,
-        )
-    )
 
 
 def make_work(

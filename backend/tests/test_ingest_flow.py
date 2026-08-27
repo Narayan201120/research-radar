@@ -1,14 +1,13 @@
 import pytest
 from sqlalchemy import func, select, text
 
-from app.models import IngestState, Paper, PaperSimilarity, Topic
+from app.models import IngestState, Paper, Topic
 from app.services.embeddings import HashingFakeProvider
 from app.services.ingest import (
     backfill_watermarks,
     resolve_boot_action,
     run_incremental_ingest,
     run_ingest,
-    run_similarity_rebuild,
 )
 from tests.helpers import add_author, add_paper, add_topic, make_work
 
@@ -55,35 +54,36 @@ class FakeOpenAlexClient:
 
 def test_ingest_populates_all_tables(session):
     client = FakeOpenAlexClient()
-    report = run_ingest(session, client, TOPICS)
+    report = run_ingest(session, client, TOPICS, embedding_provider=HashingFakeProvider(dim=8))
 
     assert report.papers == 2 * PER_TOPIC
     assert report.papers_new == 2 * PER_TOPIC
     assert report.papers_updated == 0
     assert report.authors == 12  # 7 Author i + 5 CoAuthor i
     assert report.relations > 0
-    assert report.similarity_pairs == 2 * PER_TOPIC * 5
+    assert report.embedded == 2 * PER_TOPIC
+    assert report.similarity_pairs == 0
     assert report.papers_in_db == 2 * PER_TOPIC
-    assert session.scalar(select(func.count()).select_from(PaperSimilarity)) == 2 * PER_TOPIC * 5
+    assert session.execute(text("SELECT count(*) FROM paper_embedding")).scalar_one() == 2 * PER_TOPIC
 
 
 def test_ingest_is_idempotent(session):
     client = FakeOpenAlexClient()
-    first = run_ingest(session, client, TOPICS)
-    second = run_ingest(session, client, TOPICS)
+    first = run_ingest(session, client, TOPICS, embedding_provider=HashingFakeProvider(dim=8))
+    second = run_ingest(session, client, TOPICS, embedding_provider=HashingFakeProvider(dim=8))
 
     assert second.papers_new == 0
     assert second.papers_updated == first.papers
     assert second.relations == 0  # no duplicate junction rows
     assert second.authors == first.authors
     assert second.papers_in_db == first.papers_in_db
-    assert second.similarity_pairs == first.similarity_pairs
+    assert second.embedded == 0  # no text changed on second run
     assert session.scalar(select(func.count()).select_from(Paper)) == first.papers
 
 
 def test_only_if_empty_skips_when_papers_exist(session):
     client = FakeOpenAlexClient()
-    first = run_ingest(session, client, TOPICS)
+    first = run_ingest(session, client, TOPICS, embedding_provider=HashingFakeProvider(dim=8))
     skipped = run_ingest(session, client, TOPICS, only_if_empty=True)
 
     assert skipped.papers == 0
@@ -93,22 +93,14 @@ def test_only_if_empty_skips_when_papers_exist(session):
 def test_normalization_drops_empty_titles(session):
     client = FakeOpenAlexClient()
     client.by_topic["T10531"].insert(0, make_work("W-junk", "", abstract="orphan"))
-    report = run_ingest(session, client, TOPICS)
+    report = run_ingest(session, client, TOPICS, embedding_provider=HashingFakeProvider(dim=8))
     assert report.papers == 2 * PER_TOPIC  # junk work dropped, others kept
     assert "W-junk" not in {p.openalex_id for p in session.scalars(select(Paper)).all()}
 
 
-def test_similarity_rebuild_is_idempotent(session):
-    client = FakeOpenAlexClient()
-    run_ingest(session, client, TOPICS)
-    first = run_similarity_rebuild(session)
-    second = run_similarity_rebuild(session)
-    assert first == second == 2 * PER_TOPIC * 5
-
-
 def test_boot_action_resolution():
     assert resolve_boot_action(0, 0) == "ingest"
-    assert resolve_boot_action(5, 0) == "rebuild-similarity"
+    assert resolve_boot_action(5, 0) == "skip"
     assert resolve_boot_action(5, 10) == "skip"
 
 
@@ -126,24 +118,9 @@ def test_backfill_watermarks_upgrades_static_database(session):
     assert {slug: s.last_incremental_at for slug, s in second.items()} == first_pass
 
 
-def test_boot_rebuild_fixes_missing_similarity(session):
-    client = FakeOpenAlexClient()
-    run_ingest(session, client, TOPICS)
-    session.execute(PaperSimilarity.__table__.delete())
-    session.commit()
-
-    assert resolve_boot_action(session.scalar(select(func.count()).select_from(Paper)), 0) == "rebuild-similarity"
-    pairs = run_similarity_rebuild(session)
-    assert pairs == 2 * PER_TOPIC * 5
-    assert resolve_boot_action(
-        session.scalar(select(func.count()).select_from(Paper)),
-        session.scalar(select(func.count()).select_from(PaperSimilarity)),
-    ) == "skip"
-
-
 def test_topic_upsert_matches_slug(session):
     client = FakeOpenAlexClient()
-    run_ingest(session, client, TOPICS)
+    run_ingest(session, client, TOPICS, embedding_provider=HashingFakeProvider(dim=8))
     assert {t.slug for t in session.scalars(select(Topic)).all()} == {"computer-vision", "large-language-models"}
 
 
@@ -184,7 +161,7 @@ def test_ingest_verifies_dois_and_drops_unresolvable(session, monkeypatch):
 
     transport = httpx.MockTransport(handler)
 
-    report = run_ingest(session, client, TOPICS, verify_dois=True, doi_transport=transport)
+    report = run_ingest(session, client, TOPICS, verify_dois=True, doi_transport=transport, embedding_provider=HashingFakeProvider(dim=8))
 
     assert report.dois_checked == 2 * PER_TOPIC + 2
     assert report.dois_replaced == 1
@@ -212,7 +189,7 @@ def _watermarks(session):
 
 def test_full_ingest_seeds_watermarks(session):
     client = FakeOpenAlexClient()
-    run_ingest(session, client, TOPICS)
+    run_ingest(session, client, TOPICS, embedding_provider=HashingFakeProvider(dim=8))
 
     states = _watermarks(session)
     assert set(states) == {"computer-vision", "large-language-models"}
@@ -228,7 +205,7 @@ def test_incremental_requires_watermark(session):
 
 def test_incremental_adds_new_and_updates_existing(session):
     client = FakeOpenAlexClient()
-    run_ingest(session, client, TOPICS)
+    run_ingest(session, client, TOPICS, embedding_provider=HashingFakeProvider(dim=8))
     before_count = session.scalar(select(func.count()).select_from(Paper))
 
     fresh = make_work(
@@ -245,7 +222,7 @@ def test_incremental_adds_new_and_updates_existing(session):
     )
     client.updates_by_topic = {"T10531": [fresh], "T10181": [changed]}
 
-    report = run_incremental_ingest(session, client, TOPICS)
+    report = run_incremental_ingest(session, client, TOPICS, embedding_provider=HashingFakeProvider(dim=8))
 
     assert report.topics_fetched == {"computer-vision": 1, "large-language-models": 1}
     assert report.papers == 2
@@ -260,14 +237,14 @@ def test_incremental_adds_new_and_updates_existing(session):
 
 def test_incremental_advances_watermark(session):
     client = FakeOpenAlexClient()
-    run_ingest(session, client, TOPICS)
+    run_ingest(session, client, TOPICS, embedding_provider=HashingFakeProvider(dim=8))
     original = {slug: s.last_incremental_at for slug, s in _watermarks(session).items()}
 
     client.updates_by_topic = {
         "T10531": [make_work("W-T10531-new-2", "another new vision paper")],
         "T10181": [],
     }
-    run_incremental_ingest(session, client, TOPICS)
+    run_incremental_ingest(session, client, TOPICS, embedding_provider=HashingFakeProvider(dim=8))
 
     after = {slug: s.last_incremental_at for slug, s in _watermarks(session).items()}
     assert all(after[slug] > original[slug] for slug in original)
@@ -275,14 +252,14 @@ def test_incremental_advances_watermark(session):
 
 def test_incremental_is_idempotent(session):
     client = FakeOpenAlexClient()
-    run_ingest(session, client, TOPICS)
+    run_ingest(session, client, TOPICS, embedding_provider=HashingFakeProvider(dim=8))
     client.updates_by_topic = {
         "T10531": [make_work("W-T10531-inc-1", "an incremental vision paper")],
         "T10181": [],
     }
 
-    first = run_incremental_ingest(session, client, TOPICS)
-    second = run_incremental_ingest(session, client, TOPICS)
+    first = run_incremental_ingest(session, client, TOPICS, embedding_provider=HashingFakeProvider(dim=8))
+    second = run_incremental_ingest(session, client, TOPICS, embedding_provider=HashingFakeProvider(dim=8))
 
     assert first.papers_new == 1
     assert second.papers_new == 0
@@ -293,11 +270,11 @@ def test_incremental_is_idempotent(session):
 
 def test_incremental_empty_delta_still_commits_watermark(session):
     client = FakeOpenAlexClient()
-    run_ingest(session, client, TOPICS)
+    run_ingest(session, client, TOPICS, embedding_provider=HashingFakeProvider(dim=8))
     original = {slug: s.last_incremental_at for slug, s in _watermarks(session).items()}
 
     client.updates_by_topic = {"T10531": [], "T10181": []}
-    report = run_incremental_ingest(session, client, TOPICS)
+    report = run_incremental_ingest(session, client, TOPICS, embedding_provider=HashingFakeProvider(dim=8))
 
     assert report.papers == 0
     assert report.similarity_pairs == 0
@@ -307,13 +284,13 @@ def test_incremental_empty_delta_still_commits_watermark(session):
 
 def test_incremental_since_overrides_watermark(session):
     client = FakeOpenAlexClient()
-    run_ingest(session, client, TOPICS)
+    run_ingest(session, client, TOPICS, embedding_provider=HashingFakeProvider(dim=8))
 
     client.updates_by_topic = {
         "T10531": [make_work("W-T10531-backfill", "a backfilled vision paper")],
         "T10181": [],
     }
-    report = run_incremental_ingest(session, client, TOPICS, since_date="2020-01-01")
+    report = run_incremental_ingest(session, client, TOPICS, since_date="2020-01-01", embedding_provider=HashingFakeProvider(dim=8))
 
     assert report.papers == 1
     assert report.papers_new == 1
@@ -331,7 +308,7 @@ def test_cross_topic_duplicate_keeps_both_topics(session):
     client.by_topic["T10531"].append(shared)
     client.by_topic["T10181"].append(dict(shared))
 
-    report = run_ingest(session, client, TOPICS)
+    report = run_ingest(session, client, TOPICS, embedding_provider=HashingFakeProvider(dim=8))
     assert report.papers == 2 * PER_TOPIC + 1
 
     paper = session.scalar(select(Paper).where(Paper.openalex_id == "W-shared-1"))
@@ -359,7 +336,7 @@ def test_full_ingest_embeds_all_and_skips_snapshot(session):
 
 def test_incremental_embeds_only_text_changed_papers(session):
     client = FakeOpenAlexClient()
-    run_ingest(session, client, TOPICS)  # legacy baseline
+    run_ingest(session, client, TOPICS, embedding_provider=HashingFakeProvider(dim=8))  # baseline with embeddings
 
     fresh = make_work("W-T10531-new-9", "a brand new vision paper")
     citation_bump = make_work(

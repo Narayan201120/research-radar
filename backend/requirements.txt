@@ -69,8 +69,6 @@ idna==3.19
     #   requests
 iniconfig==2.3.0
     # via pytest
-joblib==1.5.3
-    # via scikit-learn
 loguru==0.7.3
     # via fastembed
 mako==1.4.1
@@ -79,14 +77,10 @@ markupsafe==3.0.3
     # via mako
 mmh3==5.2.1
     # via fastembed
-narwhals==2.25.0
-    # via scikit-learn
 numpy==2.5.2
     # via
     #   fastembed
     #   onnxruntime
-    #   scikit-learn
-    #   scipy
 onnxruntime==1.29.0
     # via fastembed
 packaging==26.3
@@ -128,18 +122,12 @@ pyyaml==6.0.3
     #   uvicorn
 requests==2.34.2
     # via fastembed
-scikit-learn==1.9.0
-    # via -r backend/requirements.in
-scipy==1.18.1
-    # via scikit-learn
 sqlalchemy==2.0.52
     # via
     #   -r backend/requirements.in
     #   alembic
 starlette==1.6.0
     # via fastapi
-threadpoolctl==3.6.0
-    # via scikit-learn
 tokenizers==0.23.1
     # via fastembed
 tqdm==4.70.0

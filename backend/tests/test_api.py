@@ -1,4 +1,4 @@
-from tests.helpers import add_author, add_paper, add_similarity, add_topic
+from tests.helpers import add_author, add_paper, add_topic
 
 
 def _seed(client, session):
@@ -42,8 +42,6 @@ def _seed(client, session):
         authors=[],
         topics=[cv],
     )
-    add_similarity(session, attention.id, llama.id, 0.87654321)
-    add_similarity(session, attention.id, yolo.id, 0.12)
     session.commit()
     return {
         "attention": attention,
@@ -195,20 +193,15 @@ def test_detail_404_for_unknown_and_non_int(client, session):
     assert client.get("/papers/-1").status_code == 404
 
 
-def test_similar_returns_sorted_and_rounded(client, session):
+def test_similar_returns_empty_on_sqlite_without_ann(client, session):
+    """SQLite has no pgvector/HNSW (``<=>``), so ``/similar`` always returns
+    an empty list post cutover — snapshot was dropped in a1b2c3d4e5f6."""
     data = _seed(client, session)
     assert client.get(f"/papers/{data['cnn'].id + 10}/similar").status_code == 404
     assert client.get("/papers/abc/similar").status_code == 404
 
-    similar = client.get(f"/papers/{data['attention'].id}/similar")
-    assert similar.status_code == 200
-    body = similar.json()
-    assert len(body) == 2
-    assert body[0]["id"] == data["llama"].id
-    assert body[0]["similarity_score"] == 0.8765
-    assert body[0]["title"] == "LLaMA: Open and Efficient Foundation Language Models"
-    assert body[1]["id"] == data["yolo"].id
-    assert body[1]["similarity_score"] == 0.12
+    body = client.get(f"/papers/{data['attention'].id}/similar").json()
+    assert body == []
 
 
 def test_similar_returns_empty_for_paper_without_neighbors(client, session):
@@ -217,9 +210,9 @@ def test_similar_returns_empty_for_paper_without_neighbors(client, session):
     assert body == []
 
 
-def test_similar_falls_back_to_snapshot_where_vector_sql_unsupported(client, session):
-    """Documents the dialect guard: on SQLite (no <=> operator) a stored vector
-    is ignored and the legacy snapshot serves the response unchanged."""
+def test_similar_returns_empty_even_with_vector_on_sqlite(client, session):
+    """Documents the dialect guard: on SQLite (no ``<=>``) a stored vector
+    is ignored and no snapshot fallback exists post cutover."""
     from sqlalchemy import text as sql_text
 
     data = _seed(client, session)
@@ -231,11 +224,8 @@ def test_similar_falls_back_to_snapshot_where_vector_sql_unsupported(client, ses
     )
     session.commit()
 
-    similar = client.get(f"/papers/{data['attention'].id}/similar")
-    assert similar.status_code == 200
-    body = similar.json()
-    assert body[0]["similarity_score"] == 0.8765  # legacy snapshot values
-    assert body[0]["id"] == data["llama"].id
+    body = client.get(f"/papers/{data['attention'].id}/similar").json()
+    assert body == []
 
 
 def test_similar_404s_before_any_vector_lookup(client, session):

@@ -5,7 +5,7 @@ from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.orm import Session, selectinload
 
 from app.api.deps import get_db
-from app.models import Author, Paper, PaperSimilarity, Topic
+from app.models import Author, Paper, Topic
 from app.schemas.papers import (
     PaperDetail,
     PaperListItem,
@@ -223,26 +223,4 @@ def get_similar_papers(paper_id: str, db: DbSession) -> list[SimilarItem]:
         if vector_items is not None:
             return vector_items
 
-    rows = db.execute(
-        select(
-            PaperSimilarity.similar_paper_id,
-            Paper.title,
-            PaperSimilarity.similarity_score,
-        )
-        .join(Paper, Paper.id == PaperSimilarity.similar_paper_id)
-        .where(PaperSimilarity.paper_id == raw)
-        .order_by(
-            PaperSimilarity.similarity_score.desc(),
-            PaperSimilarity.similar_paper_id.asc(),
-        )
-        .limit(SIMILAR_LIMIT)
-    ).all()
-
-    return [
-        SimilarItem(
-            id=row.similar_paper_id,
-            title=row.title,
-            similarity_score=round(row.similarity_score, 4),
-        )
-        for row in rows
-    ]
+    return []

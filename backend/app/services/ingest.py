@@ -8,11 +8,10 @@ import httpx
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import Author, IngestState, Paper, PaperAuthor, PaperSimilarity, PaperTopic, Topic
+from app.models import Author, IngestState, Paper, PaperAuthor, PaperTopic, Topic
 from app.services.doi_checker import verify_works
 from app.services.embeddings import EmbeddingProvider, embed_papers_by_ids
 from app.services.openalex import OpenAlexClient, reconstruct_abstract
-from app.services.similarity import build_tfidf_matrix, find_top_similar
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +39,7 @@ class IngestReport:
     papers_updated: int = 0
     authors: int = 0
     relations: int = 0
-    similarity_pairs: int = 0
+    similarity_pairs: int = 0  # retained for log compat; always 0 post cutover
     embedded: int = 0
     papers_in_db: int = 0
     fell_back_to: str | None = None
@@ -105,11 +104,7 @@ def _upsert_author(session: Session, openalex_id: str, name: str) -> Author | No
 
 
 def _normalize_fetched(fetched: dict[str, list[dict]]) -> dict[str, dict]:
-    """Normalize works and dedupe across topics by openalex_id.
-
-    A work fetched under several topics stays one paper carrying every
-    topic slug it appeared under.
-    """
+    """Normalize works and dedupe across topics by openalex_id."""
     normalized: dict[str, dict] = {}
     for slug, batch in fetched.items():
         for work in batch:
@@ -149,12 +144,7 @@ def _apply_normalized_works(
     topic_rows: dict[str, Topic],
     report: IngestReport,
 ) -> set[int]:
-    """Upsert papers (assign ids via flush), then authors and junction rows.
-
-    Returns ids of papers whose embedded text changed — new papers plus any
-    whose title or abstract was edited. Citation-count/DOI/year bumps keep
-    their existing vector.
-    """
+    """Upsert papers, then authors and junction rows. Returns ids whose text changed."""
     papers_by_openalex: dict[str, Paper] = {}
     touched_openalex: set[str] = set()
     for openalex_id, data in normalized.items():
@@ -242,17 +232,7 @@ def run_ingest(
     doi_transport: httpx.BaseTransport | None = None,
     embedding_provider: EmbeddingProvider | None = None,
 ) -> IngestReport:
-    """Upsert papers/authors/topics + rebuild junctions inside one transaction.
-
-    topics: list of (slug, openalex_topic_id, display_name).
-    verify_dois: when True, DOIs are checked at ingest; works whose DOI is
-    definitively dead (404/410) and has no resolving alternate landing page
-    are dropped before normalization. doi_transport overrides the HTTP
-    transport (tests).
-    embedding_provider: non-None selects embeddings mode — touched papers get
-    vectors and the TF-IDF snapshot rebuild is skipped; None keeps legacy
-    behavior exactly.
-    """
+    """Upsert papers/authors/topics + embed touched papers inside one transaction."""
     report = IngestReport()
 
     if only_if_empty:
@@ -262,12 +242,10 @@ def run_ingest(
             report.papers_in_db = existing
             return report
 
-    # 1. Ensure the two topic rows exist
     topic_rows: dict[str, Topic] = {}
     for slug, topic_id, name in topics:
         topic_rows[slug] = _upsert_topic(session, slug, topic_id, name)
 
-    # 2. Fetch per topic
     fetched: dict[str, list[dict]] = {}
     fell_back = False
     for slug, topic_id, _name in topics:
@@ -279,11 +257,9 @@ def run_ingest(
         logger.info("topic %s: fetched %s papers (from %s)", slug, len(batch), from_date)
     report.fell_back_to = None if not fell_back else "date ladder"
 
-    # 2b. Verify DOIs before normalizing (dropped works never reach the DB)
     if verify_dois:
         _drop_unresolvable_dois(fetched, report, transport=doi_transport)
 
-    # 3. Normalize + dedupe across topics by openalex_id
     normalized = _normalize_fetched(fetched)
 
     total = len(normalized)
@@ -293,20 +269,13 @@ def run_ingest(
             f"minimum is {MIN_TOTAL_PAPERS} (check topic IDs and OpenAlex availability)"
         )
     if total > MAX_TOTAL_PAPERS:
-        raise RuntimeError(
-            f"ingest produced {total} papers; maximum is {MAX_TOTAL_PAPERS}"
-        )
+        raise RuntimeError(f"ingest produced {total} papers; maximum is {MAX_TOTAL_PAPERS}")
     report.papers = total
 
-    # 4-5. Upsert papers, authors, and junction rows
     touched_ids = _apply_normalized_works(session, normalized, topic_rows, report)
 
     if embedding_provider is not None:
-        # embeddings mode: vectors only, no TF-IDF snapshot rebuild
         report.embedded = embed_papers_by_ids(session, embedding_provider, sorted(touched_ids))
-    else:
-        # 6. Rebuild the TF-IDF snapshot in the same transaction
-        report.similarity_pairs = rebuild_similarity(session)
     _seed_watermarks(session, topics)
     session.commit()
 
@@ -326,19 +295,7 @@ def run_incremental_ingest(
     since_date: str | None = None,
     embedding_provider: EmbeddingProvider | None = None,
 ) -> IngestReport:
-    """Fetch works changed since each topic's watermark and upsert them.
-
-    The 300-500 corpus guards deliberately do not apply here: a quiet day
-    may legitimately bring zero new works. Raises RuntimeError when a topic
-    has no watermark yet (run a full ingest first). On success every
-    watermark advances to the fetch *start* time inside the same transaction
-    as the data, so a crash rolls both back and nothing is missed next run.
-    Day-level filter granularity means same-day churn can be refetched;
-    upsert-by-openalex-id makes that safe. ``since_date`` (YYYY-MM-DD)
-    overrides the stored watermark for manual backfills. ``embedding_provider``
-    non-None selects embeddings mode: only text-changed papers are embedded
-    and the TF-IDF snapshot rebuild is skipped.
-    """
+    """Fetch works changed since each topic's watermark and upsert them."""
     report = IngestReport()
     started_at = datetime.now(timezone.utc)
 
@@ -346,9 +303,7 @@ def run_incremental_ingest(
     for slug, _topic_id, _name in topics:
         state = session.scalar(select(IngestState).where(IngestState.topic_slug == slug))
         if state is None or state.last_incremental_at is None:
-            raise RuntimeError(
-                f"no ingest watermark for topic '{slug}'; run a full ingest first"
-            )
+            raise RuntimeError(f"no ingest watermark for topic '{slug}'; run a full ingest first")
         states[slug] = state
 
     topic_rows: dict[str, Topic] = {
@@ -358,10 +313,7 @@ def run_incremental_ingest(
 
     fetched: dict[str, list[dict]] = {}
     for slug, topic_id, _name in topics:
-        since = (
-            since_date
-            or _as_utc(states[slug].last_incremental_at).date().isoformat()
-        )
+        since = since_date or _as_utc(states[slug].last_incremental_at).date().isoformat()
         batch = client.fetch_updated_works(topic_id, since, max_papers_per_topic)
         fetched[slug] = batch
         report.topics_fetched[slug] = len(batch)
@@ -377,8 +329,6 @@ def run_incremental_ingest(
         touched_ids = _apply_normalized_works(session, normalized, topic_rows, report)
         if embedding_provider is not None:
             report.embedded = embed_papers_by_ids(session, embedding_provider, sorted(touched_ids))
-        else:
-            report.similarity_pairs = rebuild_similarity(session)
 
     for state in states.values():
         state.last_incremental_at = started_at
@@ -395,50 +345,8 @@ def run_incremental_ingest(
     return report
 
 
-def rebuild_similarity(session: Session, top_k: int = 5) -> int:
-    """Regenerate the paper_similarity snapshot inside the current transaction.
-
-    Every paper gets up to ``top_k`` neighbors with score > 0. Papers with no
-    text (no title and no abstract) produce zero vectors and therefore no rows.
-    """
-    clear_similarity(session)
-    rows = session.execute(select(Paper.id, Paper.title, Paper.abstract).order_by(Paper.id)).all()
-    if len(rows) < 2:
-        return 0
-
-    ids = [int(row.id) for row in rows]
-    texts = [
-        " ".join(part.strip() for part in (row.title, row.abstract) if part and part.strip())
-        for row in rows
-    ]
-    matrix = build_tfidf_matrix(texts)
-    triples = find_top_similar(matrix, top_k)
-    session.add_all(
-        PaperSimilarity(paper_id=ids[i], similar_paper_id=ids[j], similarity_score=score)
-        for i, j, score in triples
-    )
-    return len(triples)
-
-
-def run_similarity_rebuild(session: Session, top_k: int = 5) -> int:
-    """Standalone similarity-only rebuild in its own transaction."""
-    count = rebuild_similarity(session)
-    session.commit()
-    return count
-
-
-def clear_similarity(session: Session) -> None:
-    """Wipe stale similarity snapshot before regenerating (same transaction)."""
-    session.execute(PaperSimilarity.__table__.delete())
-
-
 def backfill_watermarks(session: Session, topics: list[tuple[str, str, str]]) -> None:
-    """Ensure every topic has a watermark row (upgrade path).
-
-    Databases ingested before watermarks existed get a baseline stamped at
-    upgrade time: there is no fetch history to reconstruct, so "now" becomes
-    the point from which change tracking starts.
-    """
+    """Ensure every topic has a watermark row (upgrade path)."""
     now = datetime.now(timezone.utc)
     for slug, _topic_id, _name in topics:
         state = session.scalar(select(IngestState).where(IngestState.topic_slug == slug))
@@ -449,9 +357,11 @@ def backfill_watermarks(session: Session, topics: list[tuple[str, str, str]]) ->
 
 
 def resolve_boot_action(papers: int, similarity_pairs: int) -> str:
-    """What ``--boot`` should do, given current table sizes."""
+    """What ``--boot`` should do, given current table sizes.
+
+    ``similarity_pairs`` is kept for log compat (always 0 post cutover); the
+    decision now depends only on whether papers exist.
+    """
     if papers == 0:
         return "ingest"
-    if similarity_pairs == 0:
-        return "rebuild-similarity"
     return "skip"

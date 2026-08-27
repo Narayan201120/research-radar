@@ -12,8 +12,8 @@ with **BM25 ranked search** and **Find Similar Papers** powered by semantic embe
 | Backend    | FastAPI, SQLAlchemy 2.0, Alembic |
 | Database   | PostgreSQL 16 via `paradedb/paradedb:0.25.3-pg16` (pgvector + pg_search BM25, single image) |
 | Search     | ParadeDB BM25 (`paper_search_idx` on `title`+`abstract`, `paradedb.score` ranking) with ILIKE fallback; `?ranked=true` opts into relevance ordering |
-| Similarity | Dual-path: semantic `paper_embedding` (384-d `all-MiniLM-L6-v2` via fastembed ONNX, HNSW `vector_cosine_ops`, ANN at read time) with legacy TF-IDF `paper_similarity` snapshot fallback — contract unchanged, vectors win when present |
-| Tests      | pytest (90 tests: 85 SQLite hermetic + 5 Postgres integration gated on ParadeDB — `pytest -m postgres`) |
+| Similarity | Semantic `paper_embedding` (384-d `all-MiniLM-L6-v2` via fastembed ONNX, HNSW `vector_cosine_ops`, ANN at read time, `O(Δ)` write + `O(log N)` read) — `paper_similarity` snapshot removed in `a1b2c3d4e5f6` |
+| Tests      | pytest (77 tests: 72 SQLite hermetic + 5 Postgres integration gated on ParadeDB — `pytest -m postgres`) |
 | Infra      | Docker Compose (postgres + backend + frontend + scheduler sidecar) |
 
 ## Quick start
@@ -30,11 +30,11 @@ On first boot the backend automatically:
 1. waits for PostgreSQL,
 2. runs Alembic migrations,
 3. ingests 500 papers (two OpenAlex topics, 2023+) if the database is empty,
-4. builds the TF-IDF similarity snapshot, and
+4. embeds title+abstract for every paper (`paper_embedding` HNSW), and
 5. starts uvicorn.
 
-A guarded runner decides between *full ingest*, *similarity-only rebuild*, and *skip*
-on every boot, so restarts are safe and idempotent.
+A guarded boot runner (`--boot`) decides between *full ingest* when empty else *skip*,
+so restarts are safe and idempotent; no nightly `O(N²)` rebuild.
 
 A separate **scheduler sidecar** keeps the corpus current: it fetches only
 papers changed since each topic's watermark (`ingest_state` table) immediately
@@ -54,7 +54,7 @@ next tick without taking anything down.
   duplicates author/topic relations, and writes are crash-consistent (data +
   watermark + embeddings share the same transaction).
 - Normalized schema: `paper`, `author`, `topic`, `paper_author`, `paper_topic`,
-  `paper_similarity`, `paper_embedding`, `ingest_state`.
+  `paper_embedding` (`vector(384)` HNSW), `ingest_state` (`paper_similarity` dropped in `a1b2c3d4e5f6`).
 - Live corpus: `ingest_state` watermarks (`last_full_ingest_at`/`last_incremental_at`
   per topic) drive `from_updated_date` delta fetches (`updated_date:desc`) capped at
   200/topic; `backfill_watermarks` upgrades pre-existing static volumes.
@@ -72,17 +72,15 @@ next tick without taking anything down.
 
 ### Similarity (Find Similar Papers)
 
-- **Semantic path (current):** `paper_embedding(paper_id PK/FK, embedding vector(384))`
-  with HNSW `vector_cosine_ops`; `GET /papers/{id}/similar` probes for a vector first
-  → ANN `ORDER BY embedding <=> self` (filtered `>0`, rounded to 4dp, deterministic
-  tie-break by id). Write cost is `O(Δ)` — only new or title/abstract-changed papers
-  are (re-)embedded during ingest; citation bumps do not trigger re-embedding.
-- **Legacy snapshot:** `paper_similarity` top-5 cosine rows regenerated on every
-  ingest when `SIMILARITY_BACKEND=tfidf` (the current default). `tfidf` vectorization:
-  lowercase, English stopwords, 1–2 grams over `title + abstract`; `>0` scores only,
-  self excluded. Snapshot rebuild is skipped in `embeddings` mode.
+- `paper_embedding(paper_id PK/FK, embedding vector(384))` with HNSW
+  `vector_cosine_ops`; `GET /papers/{id}/similar` returns ANN neighbors
+  `ORDER BY embedding <=> self` (filtered `>0`, rounded to 4dp, deterministic
+  tie-break by id, `[]` if no vector). Write cost is `O(Δ)` — only new or
+  title/abstract-changed papers are (re-)embedded during ingest; citation bumps
+  do not trigger re-embedding. No `paper_similarity` snapshot — TF-IDF
+  `scikit-learn` path removed in `a1b2c3d4e5f6` (image shrinks ~100MB compressed).
 - Papers with no text (no title/abstract, as returned by OpenAlex for ~12% of
-  works) contribute zero vectors and have no similarity rows (permanently skipped by
+  works) contribute zero vectors and return `[]` (permanently skipped by
   `scripts/backfill_embeddings.py`). At 500 papers all live rows are embedded.
 
 ## API
@@ -135,21 +133,20 @@ Top-5 similar papers, self-excluded by construction, scores rounded to 4 decimal
 ## Tests
 
 ```bash
-docker compose exec backend python -m pytest        # all hermetic + live gate (90 tests)
-python -m pytest -q                                 # hermetic from backend/ with local venv (85, 5 skipped without Docker)
+docker compose exec backend python -m pytest        # all tests (77: 72 hermetic + 5 gate live)
+python -m pytest -q                                 # hermetic from backend/ with local venv (72, 5 skipped without Docker)
 python -m pytest -m postgres -q                     # Postgres gate only (5 tests, requires ParadeDB)
 ```
 
-90 tests: 85 hermetic per-test in-memory SQLite schema (no network) + 5
-Postgres/ParadeDB integration — similarity edge cases, API endpoints
-(search/filters/pagination/404s/LIKE escaping, `?ranked` validation and
-dialect-guard degradation), `similar` dialect guard (SQLite falls back to
-snapshot even with a stored vector), ingest idempotency (fake client fetched
-twice → 0 new rows), the real OpenAlex client (httpx `MockTransport`),
-abstract reconstruction, DOI verifier, and live BM25 relevance + ANN similarity
+77 tests: 72 hermetic per-test in-memory SQLite schema (no network) + 5
+Postgres/ParadeDB integration — API endpoints (search/filters/pagination/404s/LIKE
+escaping, `?ranked` validation and dialect-guard degradation), `similar` returns
+`[]` on SQLite (no vector/HNSW), ingest idempotency (fake client fetched twice →
+0 new rows), the real OpenAlex client (httpx `MockTransport`), abstract
+reconstruction, DOI verifier, and live BM25 relevance + ANN similarity
 (`tests/test_postgres.py`, `HashingFakeProvider`, TRUNCATE per test).
 Hermetic stays green without Docker (5 skipped); CI `services: postgres`
-(`paradedb/paradedb:0.25.3-pg16`) runs both steps for 90 passed.
+(`paradedb/paradedb:0.25.3-pg16`) runs both steps for 77 passed.
 
 ## Repository layout
 
@@ -158,11 +155,11 @@ backend/
   app/api/          # FastAPI routes (papers, health)
   app/models/       # SQLAlchemy models
   app/schemas/      # Pydantic response models
-  app/services/     # ingest, openalex client, similarity, embeddings (EmbeddingProvider + vector helpers)
-  alembic/          # migrations (ingest_state, vector/bm25 extensions, paper_embedding + hnsw, paper_search_idx)
-  scripts/          # ingest_openalex (--similarity-only, --boot, --incremental/--since), scheduler, backfill_embeddings
-  tests/            # pytest suite (conftest SQLite shim for paper_embedding)
-  requirements.in/txt  # pip-tools pinned (40 packages)
+  app/services/     # ingest, openalex client, embeddings (EmbeddingProvider + vector helpers)
+  alembic/          # migrations (ingest_state, vector/bm25 extensions, paper_embedding + hnsw, paper_search_idx, drop paper_similarity)
+  scripts/          # ingest_openalex (--boot, --incremental/--since), scheduler, backfill_embeddings
+  tests/            # pytest suite (conftest SQLite shim for paper_embedding, @pytest.mark.postgres gate)
+  requirements.in/txt  # pip-tools pinned
 frontend/
   app/              # Next.js pages (search, /papers/[id], 404)
   components/       # SearchExplorer, PaperCard, Pagination
@@ -182,7 +179,7 @@ frontend/
 | `OPENALEX_TOPIC_LLM_ID` | `T10181` |
 | `INGEST_ON_BOOT`        | `true` |
 | `INGEST_INTERVAL_HOURS` | `24` |
-| `SIMILARITY_BACKEND`    | `tfidf` (`tfidf` \| `embeddings` — controls ingest embedding writes + snapshot rebuild skip; `/similar` is data-driven regardless) |
+| `SIMILARITY_BACKEND`    | `embeddings` (`embeddings` default; `tfidf` via env no longer has code — revert via `git revert`) |
 | `EMBEDDING_MODEL_NAME`  | `sentence-transformers/all-MiniLM-L6-v2` (384-d, baked into image at `/app/.fastembed`) |
 | `API_BASE_URL` (frontend) | `http://backend:8000` |
 | `NEXT_PUBLIC_API_BASE_URL` (frontend build arg) | `http://localhost:8000` |

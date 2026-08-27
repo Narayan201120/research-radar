@@ -2,22 +2,18 @@
 """Idempotent OpenAlex ingestion for Research Radar.
 
 Usage:
-    python -m scripts.ingest_openalex [--only-if-empty] [--similarity-only]
+    python -m scripts.ingest_openalex [--only-if-empty]
                                       [--boot] [--no-verify-dois]
                                       [--incremental] [--since YYYY-MM-DD]
 
 Modes:
-    default          fetch + upsert papers, then rebuild similarity snapshot
+    default          fetch + upsert papers, embed touched papers (O(Δ))
     --only-if-empty  skip ingestion when the paper table already has rows
-    --similarity-only  rebuild the similarity snapshot, no network fetch
     --incremental    fetch only works changed since each topic's watermark
                      (requires a prior full ingest); combine with --since
                      YYYY-MM-DD to backfill from an explicit date
-    --boot           self-heal: full ingest when empty; similarity-only when
-                     papers exist but the snapshot is empty; else skip.
-    --no-verify-dois  skip DOI verification (default: each DOI is checked;
-                     dead DOIs get an arXiv-first fallback, else the work is
-                     dropped before normalization)
+    --boot           self-heal: full ingest when empty, else skip (embeddings
+                     need no snapshot rebuild).
 
 Exit code 0 on success, 1 on failure.
 """
@@ -32,13 +28,12 @@ from sqlalchemy import func, select
 
 from app.core.settings import get_settings
 from app.db.session import SessionLocal
-from app.models import Paper, PaperSimilarity
+from app.models import Paper
 from app.services.ingest import (
     backfill_watermarks,
     resolve_boot_action,
     run_incremental_ingest,
     run_ingest,
-    run_similarity_rebuild,
 )
 from app.services.openalex import OpenAlexClient
 from app.services.embeddings import FastEmbedProvider
@@ -62,14 +57,9 @@ def main() -> int:
         help="skip ingestion when the paper table already has rows",
     )
     parser.add_argument(
-        "--similarity-only",
-        action="store_true",
-        help="rebuild the similarity snapshot without fetching papers",
-    )
-    parser.add_argument(
         "--boot",
         action="store_true",
-        help="self-heal mode: ingest when empty, rebuild similarity when missing, else skip",
+        help="self-heal mode: ingest when empty, else skip",
     )
     parser.add_argument(
         "--incremental",
@@ -89,8 +79,8 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    if args.incremental and (args.boot or args.similarity_only):
-        parser.error("--incremental cannot be combined with --boot or --similarity-only")
+    if args.incremental and args.boot:
+        parser.error("--incremental cannot be combined with --boot")
     if args.since and not args.incremental:
         parser.error("--since requires --incremental")
 
@@ -104,26 +94,12 @@ def main() -> int:
 
     try:
         with SessionLocal() as session:
-            if args.similarity_only:
-                pairs = run_similarity_rebuild(session)
-                logger.info("similarity-only: rebuilt %s pairs", pairs)
-                return 0
-
             if args.boot:
                 papers_count = session.scalar(select(func.count()).select_from(Paper)) or 0
-                sim_count = session.scalar(select(func.count()).select_from(PaperSimilarity)) or 0
-                action = resolve_boot_action(papers_count, sim_count)
+                action = resolve_boot_action(papers_count, 0)
                 backfill_watermarks(session, topics)
                 if action == "skip":
-                    logger.info(
-                        "boot: papers present (%s) and similarity present (%s pairs), skipping",
-                        papers_count,
-                        sim_count,
-                    )
-                    return 0
-                if action == "rebuild-similarity":
-                    pairs = run_similarity_rebuild(session)
-                    logger.info("boot: papers present (%s), rebuilt missing similarity (%s pairs)", papers_count, pairs)
+                    logger.info("boot: papers present (%s), skipping", papers_count)
                     return 0
                 logger.info("boot: database empty, running full ingest")
 
@@ -156,7 +132,7 @@ def main() -> int:
                     client.close()
             logger.info(
                 "fetched=%s papers=%s new=%s updated=%s authors=%s relations=%s "
-                "dois_checked=%s dois_replaced=%s dois_dropped=%s similarity_pairs=%s total_in_db=%s",
+                "dois_checked=%s dois_replaced=%s dois_dropped=%s embedded=%s total_in_db=%s",
                 sum(report.topics_fetched.values()),
                 report.papers,
                 report.papers_new,
@@ -166,7 +142,7 @@ def main() -> int:
                 report.dois_checked,
                 report.dois_replaced,
                 report.dois_dropped,
-                report.similarity_pairs,
+                report.embedded,
                 report.papers_in_db,
             )
             if report.papers > 0:

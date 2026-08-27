@@ -15,7 +15,7 @@ In CI the ``services: postgres: paradedb`` provides the DB, so both suites run.
 import pytest
 
 from app.services.embeddings import HashingFakeProvider, embed_papers_by_ids
-from tests.helpers import add_author, add_paper, add_similarity, add_topic
+from tests.helpers import add_author, add_paper, add_topic
 
 
 pytestmark = pytest.mark.postgres
@@ -105,7 +105,6 @@ def test_ranked_bm25_pagination_deterministic(pg_client, pg_session):
 
 
 def test_similar_ann_uses_vectors_when_present(pg_client, pg_session):
-    # Seed snapshot-friendly papers, then embed with deterministic fake provider.
     cv = add_topic(pg_session, "computer-vision")
     nlp = add_topic(pg_session, "large-language-models")
     ada = add_author(pg_session, "Ada Lovelace")
@@ -113,12 +112,10 @@ def test_similar_ann_uses_vectors_when_present(pg_client, pg_session):
     a = add_paper(pg_session, "Attention Is All You Need", abstract="transformer attention mechanisms sequence transduction", year=2025, authors=[ada], topics=[nlp])
     b = add_paper(pg_session, "Attention Is All You Need duplicate title", abstract="transformer attention mechanisms sequence transduction", year=2024, authors=[ada], topics=[nlp])
     c = add_paper(pg_session, "Very Deep Convolutional Networks", abstract="depth of convolutional network improves image classification", year=2023, authors=[ada], topics=[cv])
-    add_similarity(pg_session, a.id, c.id, 0.9)  # legacy snapshot points a -> c
     pg_session.commit()
 
-    # legacy without vectors
-    legacy = pg_client.get(f"/papers/{a.id}/similar").json()
-    assert len(legacy) == 1 and legacy[0]["id"] == c.id
+    # without vectors — empty (snapshot dropped in a1b2c3d4e5f6)
+    assert pg_client.get(f"/papers/{a.id}/similar").json() == []
 
     # embed all three — ANN should now serve b as nearest (identical text => near-1.0 cosine)
     provider = HashingFakeProvider()
@@ -132,17 +129,12 @@ def test_similar_ann_uses_vectors_when_present(pg_client, pg_session):
     assert ann[0]["similarity_score"] > 0
 
 
-def test_similar_falls_back_to_snapshot_when_vector_absent(pg_client, pg_session):
+def test_similar_returns_empty_when_vector_absent(pg_client, pg_session):
     cv = add_topic(pg_session, "computer-vision")
     ada = add_author(pg_session, "Ada Lovelace")
     a = add_paper(pg_session, "Paper A", abstract="abstract a", year=2024, authors=[ada], topics=[cv])
     b = add_paper(pg_session, "Paper B", abstract="abstract b", year=2023, authors=[ada], topics=[cv])
-    add_similarity(pg_session, a.id, b.id, 0.77)
     pg_session.commit()
-    # no vectors stored for either — must serve snapshot
-    body = pg_client.get(f"/papers/{a.id}/similar").json()
-    assert len(body) == 1 and body[0]["id"] == b.id and body[0]["similarity_score"] == 0.77
-
-    # paper with no neighbors nor vector => empty
-    empty = pg_client.get(f"/papers/{b.id}/similar").json()
-    assert empty == []
+    # no vectors stored — empty post cutover (no snapshot fallback)
+    assert pg_client.get(f"/papers/{a.id}/similar").json() == []
+    assert pg_client.get(f"/papers/{b.id}/similar").json() == []

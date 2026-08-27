@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     openalex_topic_llm_id: str = "T10181"
     ingest_interval_hours: float = 24.0
     embedding_model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
-    similarity_backend: str = "tfidf"  # tfidf | embeddings
+    similarity_backend: str = "embeddings"  # tfidf | embeddings (default semantic; tfidf via env for revert)
 
     @property
     def cors_origins_list(self) -> list[str]:

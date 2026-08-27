@@ -4,7 +4,6 @@ sqlalchemy>=2.0,<3.0
 psycopg[binary]
 pydantic-settings
 alembic
-scikit-learn
 httpx
 fastembed==0.8.0
 pytest

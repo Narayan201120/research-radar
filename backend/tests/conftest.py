@@ -70,7 +70,6 @@ def client(db):
 # ---------------------------------------------------------------------------
 
 _PG_TABLES = (
-    "paper_similarity",
     "paper_embedding",
     "paper_author",
     "paper_topic",
