@@ -243,6 +243,28 @@ def test_similar_404s_before_any_vector_lookup(client, session):
     assert client.get("/papers/abc/similar").status_code == 404
 
 
+def test_ranked_requires_q(client):
+    response = client.get("/papers?ranked=true")
+    assert response.status_code == 422
+
+
+def test_ranked_false_matches_default_behavior(client, session):
+    _seed(client, session)
+    default = client.get("/papers?q=attention").json()
+    explicit = client.get("/papers?q=attention&ranked=false").json()
+    assert default == explicit
+
+
+def test_ranked_degrades_to_legacy_on_non_postgres(client, session):
+    """Documents the dialect guard: SQLite has no pg_search, so ranked=true
+    with q serves the legacy ILIKE result set instead of erroring."""
+    data = _seed(client, session)
+    legacy = client.get("/papers?q=attention").json()
+    ranked = client.get("/papers?q=attention&ranked=true").json()
+    assert ranked["total"] == legacy["total"]
+    assert {item["id"] for item in ranked["items"]} >= {data["attention"].id}
+
+
 def test_health_ok(client):
     response = client.get("/health")
     assert response.status_code == 200

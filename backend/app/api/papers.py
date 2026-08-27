@@ -71,6 +71,70 @@ def _paper_wildcard(term: str) -> str:
     return f"%{_escape_like(term)}%"
 
 
+_MATCH_CLAUSE = "(p.id @@@ paradedb.match('title', :q) OR p.id @@@ paradedb.match('abstract', :q))"
+
+
+def _list_papers_ranked(
+    db: Session,
+    *,
+    q: str,
+    year: int | None,
+    topic: str | None,
+    author: str | None,
+    page: int,
+    page_size: int,
+) -> PaperListResponse:
+    """BM25-relevance listing via the paper_search_idx ParadeDB index.
+
+    Deterministic pagination: score DESC, then year DESC, id DESC.
+    """
+    filters = ""
+    params: dict[str, object] = {"q": q}
+    if year is not None:
+        filters += " AND p.publication_year = :year"
+        params["year"] = year
+    if topic:
+        filters += (
+            " AND EXISTS (SELECT 1 FROM paper_topic pt JOIN topic t ON t.id = pt.topic_id"
+            " WHERE pt.paper_id = p.id AND t.slug = :topic)"
+        )
+        params["topic"] = topic
+    if author:
+        filters += (
+            " AND EXISTS (SELECT 1 FROM paper_author pa JOIN author a ON a.id = pa.author_id"
+            " WHERE pa.paper_id = p.id AND a.name ILIKE :author_wild)"
+        )
+        params["author_wild"] = _paper_wildcard(author)
+
+    where = f"WHERE {_MATCH_CLAUSE}{filters}"
+    total = int(
+        db.execute(text(f"SELECT count(*) FROM paper p {where}"), params).scalar_one()
+    )
+    rows = db.execute(
+        text(
+            "SELECT p.id FROM paper p "
+            f"{where} "
+            "ORDER BY paradedb.score(p.id) DESC, p.publication_year DESC, p.id DESC "
+            "LIMIT :limit OFFSET :offset"
+        ),
+        {**params, "limit": page_size, "offset": (page - 1) * page_size},
+    ).all()
+    ids = [row.id for row in rows]
+    if not ids:
+        return PaperListResponse(items=[], total=total, page=page, page_size=page_size)
+
+    papers = db.scalars(
+        select(Paper).options(selectinload(Paper.authors)).where(Paper.id.in_(ids))
+    ).all()
+    by_id = {p.id: p for p in papers}
+    return PaperListResponse(
+        items=[PaperListItem.model_validate(by_id[pid]) for pid in ids if pid in by_id],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
 @router.get("/papers", response_model=PaperListResponse)
 def list_papers(
     db: DbSession,
@@ -80,7 +144,18 @@ def list_papers(
     author: str | None = None,
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = 20,
+    ranked: Annotated[bool, Query()] = False,
 ) -> PaperListResponse:
+    if ranked and not q:
+        raise HTTPException(status_code=422, detail="ranked=true requires q")
+    if ranked and q:
+        if db.get_bind().dialect.name == "postgresql":
+            return _list_papers_ranked(
+                db, q=q, year=year, topic=topic, author=author,
+                page=page, page_size=page_size,
+            )
+        # non-PostgreSQL dialects (tests) degrade to the legacy path
+
     conditions = []
     if q:
         terms = [t for t in q.split() if t]
