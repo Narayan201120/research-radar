@@ -54,7 +54,7 @@ next tick without taking anything down.
   duplicates author/topic relations, and writes are crash-consistent (data +
   watermark + embeddings share the same transaction).
 - Normalized schema: `paper` (`abstract_source`/`abstract_recovered_at` provenance in `b2c3d4e5f6a7`), `author`, `topic`, `paper_author`, `paper_topic`,
-  `paper_embedding` (`vector(384)` HNSW), `ingest_state` (`paper_similarity` dropped in `a1b2c3d4e5f6`). Abstract recovery: `paper.abstract IS NULL` → Crossref JATS → arXiv Atom waterfall (57 recoverable post re-seed, `abstract_source` provenance, re-embedded).
+  `paper_embedding` (`vector(384)` HNSW), `ingest_state` (`paper_similarity` dropped in `a1b2c3d4e5f6`). Abstract recovery: `paper.abstract IS NULL` → Crossref JATS → arXiv Atom waterfall (57 recoverable post re-seed, `1/57` recovered live via `arxiv` — `http://arxiv.org/abs/2408.16932` for dead `10.1007/9` — `56` remain title-only, `abstract_source` provenance, re-embedded, daily hook `LIMIT 20`).
 - Live corpus: `ingest_state` watermarks (`last_full_ingest_at`/`last_incremental_at`
   per topic) drive `from_updated_date` delta fetches (`updated_date:desc`) capped at
   200/topic; `backfill_watermarks` upgrades pre-existing static volumes.
