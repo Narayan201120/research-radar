@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import PaperCard from "@/components/PaperCard";
 import Pagination from "@/components/Pagination";
 import { fetchPapers, TOPIC_SLUGS, YEARS } from "@/lib/api";
+import { getBookmarkedIds, getHistoryIds } from "@/lib/bookmarks";
 import { useDebouncedValue } from "@/lib/useDebouncedValue";
 import type { PaperListResponse } from "@/lib/types";
 
@@ -41,6 +42,9 @@ export default function SearchExplorer({
   const [page, setPage] = useState(initialPage);
   const [ranked, setRanked] = useState(initialRanked);
   const [hybrid, setHybrid] = useState(initialHybrid);
+  const [showSaved, setShowSaved] = useState(false);
+  const [bookmarkedIds, setBookmarkedIds] = useState<Set<number>>(new Set());
+  const [historyIds, setHistoryIds] = useState<number[]>([]);
 
   const [result, setResult] = useState<PaperListResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -80,6 +84,28 @@ export default function SearchExplorer({
   const compact = { q: debouncedQ, year, topic, author, page, ranked, hybrid };
 
   useEffect(() => {
+    const refresh = () => {
+      setBookmarkedIds(getBookmarkedIds());
+      setHistoryIds(getHistoryIds());
+    };
+    refresh();
+    window.addEventListener("rr:bookmarks", refresh);
+    window.addEventListener("storage", refresh);
+    return () => {
+      window.removeEventListener("rr:bookmarks", refresh);
+      window.removeEventListener("storage", refresh);
+    };
+  }, []);
+
+  const displayedItems = (() => {
+    if (!result) return [];
+    if (showSaved) return result.items.filter((p) => bookmarkedIds.has(p.id));
+    return result.items;
+  })();
+
+  const displayedTotal = showSaved ? displayedItems.length : result?.total ?? 0;
+
+  useEffect(() => {
     setLoading(true);
     setError(null);
     let cancelled = false;
@@ -104,7 +130,7 @@ export default function SearchExplorer({
     syncUrl(compact);
   }, [compact, syncUrl]);
 
-  const totalPages = result ? Math.max(1, Math.ceil(result.total / PAGE_SIZE)) : 1;
+  const totalPages = result ? Math.max(1, Math.ceil((showSaved ? displayedTotal : result.total) / PAGE_SIZE)) : 1;
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8">
@@ -211,9 +237,21 @@ export default function SearchExplorer({
             />
             <span className="text-slate-600">Hybrid (RRF)</span>
           </label>
-          {(year || topic || author || q || ranked || hybrid) && (
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={showSaved}
+              onChange={(e) => setShowSaved(e.target.checked)}
+              className="rounded border-slate-300"
+            />
+            <span className="text-slate-600">★ Saved ({bookmarkedIds.size})</span>
+          </label>
+          {(year || topic || author || q || ranked || hybrid || showSaved) && (
             <button
-              onClick={() => applyState({ q: "", year: "", topic: "", author: "", page: 1, ranked: false, hybrid: false })}
+              onClick={() => {
+                applyState({ q: "", year: "", topic: "", author: "", page: 1, ranked: false, hybrid: false });
+                setShowSaved(false);
+              }}
               className="rounded-md px-2 py-1.5 text-indigo-600 hover:text-indigo-800"
             >
               Clear filters
@@ -228,21 +266,36 @@ export default function SearchExplorer({
         </p>
       )}
 
+      {historyIds.length > 0 && !q && !year && !topic && !author && !ranked && !hybrid && !showSaved && (
+        <div className="mt-4 rounded-lg border border-slate-200 bg-white px-4 py-3">
+          <p className="text-xs font-medium text-slate-500">Recently viewed</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {historyIds.slice(0, 10).map((hid) => (
+              <a key={hid} href={`/papers/${hid}`} className="rounded bg-slate-100 px-2 py-1 text-xs text-slate-700 hover:bg-indigo-50">
+                #{hid}
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="mt-6">
         <p className="text-sm text-slate-400" aria-live="polite">
           {result
-            ? `${result.total.toLocaleString()} paper${result.total === 1 ? "" : "s"} found`
+            ? showSaved
+              ? `${displayedTotal.toLocaleString()} saved paper${displayedTotal === 1 ? "" : "s"} on this page`
+              : `${result.total.toLocaleString()} paper${result.total === 1 ? "" : "s"} found`
             : loading
               ? "Searching…"
               : ""}
         </p>
         <div className="mt-3 grid gap-3">
-          {result?.items.map((paper) => (
+          {(showSaved ? displayedItems : result?.items ?? []).map((paper) => (
             <PaperCard key={paper.id} paper={paper} />
           ))}
-          {result?.items.length === 0 && (
+          {(showSaved ? displayedItems.length === 0 : result?.items.length === 0) && (
             <p className="rounded-lg border border-slate-200 bg-white px-4 py-8 text-center text-slate-400">
-              No papers match your filters.
+              {showSaved ? "No saved papers on this page — save some with ☆ Save." : "No papers match your filters."}
             </p>
           )}
         </div>

@@ -1,4 +1,5 @@
 import type { PaperListItem } from "@/lib/types";
+import BookmarkButton from "@/components/BookmarkButton";
 
 export default function PaperCard({ paper }: { paper: PaperListItem }) {
   return (
@@ -10,9 +11,12 @@ export default function PaperCard({ paper }: { paper: PaperListItem }) {
         <h3 className="text-base font-semibold text-slate-900 line-clamp-2">
           {paper.title}
         </h3>
-        <span className="shrink-0 rounded bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700">
-          {paper.publication_year}
-        </span>
+        <div className="flex shrink-0 items-center gap-2">
+          <BookmarkButton paperId={paper.id} />
+          <span className="rounded bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700">
+            {paper.publication_year}
+          </span>
+        </div>
       </div>
       <p className="mt-2 truncate text-sm text-slate-500">
         {paper.authors.map((a) => a.name).join(", ") || "Unknown authors"}

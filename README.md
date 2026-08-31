@@ -2,7 +2,7 @@
 
 Search and explore recent research papers in computer vision and large language
 models. Backed by a PostgreSQL database seeded from [OpenAlex](https://openalex.org),
-with **BM25 ranked search** and **Find Similar Papers** powered by semantic embeddings.
+with **BM25 ranked search**, **RRF hybrid**, **Find Similar Papers** powered by semantic embeddings, and **local bookmarks/history**.
 
 ## Stack
 
@@ -167,8 +167,8 @@ backend/
   requirements.in/txt  # pip-tools pinned
 frontend/
   app/              # Next.js pages (search, /papers/[id], 404)
-  components/       # SearchExplorer, PaperCard, Pagination
-  lib/              # typed API client, config, debounce hook
+  components/       # SearchExplorer, PaperCard, Pagination, BookmarkButton, HistoryPusher
+  lib/              # typed API client, config, debounce hook, bookmarks (localStorage)
   public/           # logo assets
 ```
 

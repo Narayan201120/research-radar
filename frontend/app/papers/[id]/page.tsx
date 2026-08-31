@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 
+import HistoryPusher from "@/components/HistoryPusher";
 import { fetchPaper, fetchSimilar } from "@/lib/api";
 
 export const revalidate = 60;
@@ -17,6 +18,7 @@ export default async function PaperDetailPage({
 
   return (
     <main className="min-h-screen bg-slate-50">
+      <HistoryPusher paperId={Number(id)} />
       <div className="mx-auto max-w-4xl px-4 py-10">
         <a
           href="/"
