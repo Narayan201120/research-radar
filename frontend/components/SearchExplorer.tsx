@@ -18,6 +18,8 @@ interface SearchExplorerProps {
   initialTopic: string;
   initialAuthor: string;
   initialPage: number;
+  initialRanked?: boolean;
+  initialHybrid?: boolean;
 }
 
 export default function SearchExplorer({
@@ -26,6 +28,8 @@ export default function SearchExplorer({
   initialTopic,
   initialAuthor,
   initialPage,
+  initialRanked = false,
+  initialHybrid = false,
 }: SearchExplorerProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -35,6 +39,8 @@ export default function SearchExplorer({
   const [topic, setTopic] = useState(initialTopic);
   const [author, setAuthor] = useState(initialAuthor);
   const [page, setPage] = useState(initialPage);
+  const [ranked, setRanked] = useState(initialRanked);
+  const [hybrid, setHybrid] = useState(initialHybrid);
 
   const [result, setResult] = useState<PaperListResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -43,38 +49,42 @@ export default function SearchExplorer({
   const debouncedQ = useDebouncedValue(q, DEBOUNCE_MS);
 
   const applyState = useCallback(
-    (next: { q?: string; year?: string; topic?: string; author?: string; page?: number }) => {
+    (next: { q?: string; year?: string; topic?: string; author?: string; page?: number; ranked?: boolean; hybrid?: boolean }) => {
       setQ((v) => next.q ?? v);
       setYear((v) => next.year ?? v);
       setTopic((v) => next.topic ?? v);
       setAuthor((v) => next.author ?? v);
       setPage((v) => next.page ?? v);
+      if (next.ranked !== undefined) setRanked(next.ranked);
+      if (next.hybrid !== undefined) setHybrid(next.hybrid);
     },
     []
   );
 
   const syncUrl = useCallback(
-    (value: { q: string; year: string; topic: string; author: string; page: number }) => {
+    (value: { q: string; year: string; topic: string; author: string; page: number; ranked: boolean; hybrid: boolean }) => {
       const search = new URLSearchParams();
       if (value.q) search.set("q", value.q);
       if (value.year) search.set("year", value.year);
       if (value.topic) search.set("topic", value.topic);
       if (value.author) search.set("author", value.author);
       if (value.page > 1) search.set("page", String(value.page));
+      if (value.ranked) search.set("ranked", "true");
+      if (value.hybrid) search.set("hybrid", "true");
       const qs = search.toString();
       router.replace(`${pathname}${qs ? `?${qs}` : ""}`, { scroll: false });
     },
     [pathname, router]
   );
 
-  const compact = { q: debouncedQ, year, topic, author, page };
+  const compact = { q: debouncedQ, year, topic, author, page, ranked, hybrid };
 
   useEffect(() => {
     setLoading(true);
     setError(null);
     let cancelled = false;
 
-    fetchPapers({ q: debouncedQ, year, topic, author, page, page_size: PAGE_SIZE })
+    fetchPapers({ q: debouncedQ, year, topic, author, page, page_size: PAGE_SIZE, ranked: ranked || undefined, hybrid: hybrid || undefined })
       .then((data) => {
         if (!cancelled) setResult(data);
       })
@@ -88,7 +98,7 @@ export default function SearchExplorer({
     return () => {
       cancelled = true;
     };
-  }, [debouncedQ, year, topic, author, page]);
+  }, [debouncedQ, year, topic, author, page, ranked, hybrid]);
 
   useEffect(() => {
     syncUrl(compact);
@@ -173,9 +183,37 @@ export default function SearchExplorer({
             className="w-44 rounded-md border border-slate-300 bg-white px-2 py-1.5 text-slate-700 placeholder:text-slate-400"
             aria-label="Filter by author"
           />
-          {(year || topic || author || q) && (
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={ranked}
+              onChange={(e) => {
+                const v = e.target.checked;
+                setRanked(v);
+                if (v) setHybrid(false);
+                setPage(1);
+              }}
+              className="rounded border-slate-300"
+            />
+            <span className="text-slate-600">Ranked (BM25)</span>
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={hybrid}
+              onChange={(e) => {
+                const v = e.target.checked;
+                setHybrid(v);
+                if (v) setRanked(false);
+                setPage(1);
+              }}
+              className="rounded border-slate-300"
+            />
+            <span className="text-slate-600">Hybrid (RRF)</span>
+          </label>
+          {(year || topic || author || q || ranked || hybrid) && (
             <button
-              onClick={() => applyState({ q: "", year: "", topic: "", author: "", page: 1 })}
+              onClick={() => applyState({ q: "", year: "", topic: "", author: "", page: 1, ranked: false, hybrid: false })}
               className="rounded-md px-2 py-1.5 text-indigo-600 hover:text-indigo-800"
             >
               Clear filters

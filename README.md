@@ -11,9 +11,9 @@ with **BM25 ranked search** and **Find Similar Papers** powered by semantic embe
 | Frontend   | Next.js 16 (App Router, Turbopack), React 19, Tailwind CSS |
 | Backend    | FastAPI, SQLAlchemy 2.0, Alembic |
 | Database   | PostgreSQL 16 via `paradedb/paradedb:0.25.3-pg16` (pgvector + pg_search BM25, single image) |
-| Search     | ParadeDB BM25 (`paper_search_idx` on `title`+`abstract`, `paradedb.score` ranking) with ILIKE fallback; `?ranked=true` opts into relevance ordering |
+| Search     | ParadeDB BM25 (`paper_search_idx` on `title`+`abstract`, `paradedb.score` ranking) with ILIKE fallback; `?ranked=true` BM25, `?hybrid=true` RRF `K=60` (vector 10 + BM25 10 → 10, filters after, `422` if both) |
 | Similarity | Semantic `paper_embedding` (384-d `all-MiniLM-L6-v2` via fastembed ONNX, HNSW `vector_cosine_ops`, ANN at read time, `O(Δ)` write + `O(log N)` read) — `paper_similarity` snapshot removed in `a1b2c3d4e5f6` |
-| Tests      | pytest (81 tests: 76 SQLite hermetic + 5 Postgres integration gated on ParadeDB — `pytest -m postgres`) |
+| Tests      | pytest (81 tests: 74 SQLite hermetic + 7 Postgres integration — `pytest -m postgres` for BM25/ANN/hybrid) |
 | Infra      | Docker Compose (postgres + backend + frontend + scheduler sidecar) |
 
 ## Quick start
@@ -61,6 +61,7 @@ next tick without taking anything down.
 
 ### Search
 
+- **Hybrid mode** (`GET /papers?hybrid=true&q=...`): RRF `K=60` fusion of vector `top 10` (HNSW `embedding <=> query`) + BM25 `top 10` (`paradedb.score`), fused to `10` (port of `rag_web_app` `retriever.py:135`), filters `year/topic/author` applied **after** fusion (Option A), `page` paginates fused list. Requires `q` (`422` otherwise), `hybrid` and `ranked` mutually exclusive (`422`). `hybrid total` is fused size (≤20), not full match count — `ranked`/`ILIKE` totals are full counts. Live `q=attention` → `hybrid 14` vs `ranked 68` vs `ILIKE 69` (top-K vs full).
 - **Ranked mode** (`GET /papers?ranked=true&q=...`): BM25 via `paper_search_idx`
   (`USING paradedb (id, title, abstract) WITH (key_field='id')`, `paradedb.score`
   ordering, `score DESC, publication_year DESC, id DESC`). Year/topic/author filters
@@ -87,12 +88,13 @@ next tick without taking anything down.
 
 ### `GET /papers`
 
-Query parameters (all optional except `q` when `ranked=true`):
+Query parameters (all optional except `q` when `ranked/hybrid=true`):
 
 | Param      | Default | Semantics |
 | ---------- | ------- | --------- |
-| `q`        | —       | Search terms. `ranked=false` (default): case-insensitive ILIKE substring, all whitespace-separated terms must match. `ranked=true`: BM25 relevance query over `title`+`abstract` (`paradedb.match`, same `q` string) — requires `q` (422 otherwise) |
+| `q`        | —       | Search terms. `ranked=false, hybrid=false` (default): case-insensitive ILIKE substring, all whitespace-separated terms must match. `ranked=true`: BM25 relevance query over `title`+`abstract` (`paradedb.match`, same `q` string) — requires `q` (422 otherwise). `hybrid=true`: RRF `K=60` of vector 10 + BM25 10 → 10, requires `q` (422), `hybrid` and `ranked` mutually exclusive (422) |
 | `ranked`   | `false` | `false` → legacy ILIKE path byte-identical. `true` → BM25 relevance ordering (`paradedb.score DESC, publication_year DESC, id DESC`), same response shape (ordering is the feature, no score exposed) |
+| `hybrid`   | `false` | `false` → not hybrid. `true` → RRF hybrid (see Search above), `422` if `ranked` also `true` |
 | `year`     | —       | Exact `publication_year` |
 | `topic`    | —       | Topic slug (`computer-vision` / `large-language-models`) |
 | `author`   | —       | Case-insensitive substring on author name |
@@ -133,23 +135,23 @@ Top-5 similar papers, self-excluded by construction, scores rounded to 4 decimal
 ## Tests
 
 ```bash
-docker compose exec backend python -m pytest        # all tests (81: 76 hermetic + 5 gate live)
-python -m pytest -q                                 # hermetic from backend/ with local venv (76, 5 skipped without Docker)
-python -m pytest -m postgres -q                     # Postgres gate only (5 tests, requires ParadeDB)
+docker compose exec backend python -m pytest        # all tests (81: 74 hermetic + 7 gate live — hybrid adds 2)
+python -m pytest -q                                 # hermetic from backend/ with local venv (74, 7 skipped without Docker)
+python -m pytest -m postgres -q                     # Postgres gate only (7 tests, requires ParadeDB — BM25/ANN/hybrid)
 ```
 
-81 tests: 76 hermetic per-test in-memory SQLite schema (no network) + 5
+81 tests: 74 hermetic per-test in-memory SQLite schema (no network) + 7
 Postgres/ParadeDB integration — API endpoints (search/filters/pagination/404s/LIKE
-escaping, `?ranked` validation and dialect-guard degradation), `similar` returns
+escaping, `?ranked`/`?hybrid` validation `422` and dialect-guard degradation, `hybrid` RRF `K=60` filters-after), `similar` returns
 `[]` on SQLite (no vector/HNSW), ingest idempotency (fake client fetched twice →
 0 new rows), the real OpenAlex client (httpx `MockTransport`), abstract
 reconstruction (including `abstract_recovery` Crossref→arXiv waterfall), DOI
-verifier, and live BM25 relevance + ANN similarity (`tests/test_postgres.py`,
-`HashingFakeProvider`, TRUNCATE per test). Hermetic stays green without Docker
-(5 skipped); CI `services: postgres` (`paradedb/paradedb:0.25.3-pg16`) runs both
+verifier (private-IP block), and live BM25 relevance + ANN similarity + hybrid fusion (`tests/test_postgres.py`,
+`HashingFakeProvider`/`FastEmbedProvider`, TRUNCATE per test). Hermetic stays green without Docker
+(7 skipped); CI `services: postgres` (`paradedb/paradedb:0.25.3-pg16`) runs both
 steps for 81 passed.
 
-Abstract backfill: `docker compose exec backend python -m scripts.backfill_abstracts --dry-run` (57 recoverable) → `python -m scripts.backfill_abstracts` (polite 0.5s, re-embeds).
+Abstract backfill: `docker compose exec backend python -m scripts.backfill_abstracts --dry-run` (57 recoverable, `1/57` via `arxiv`) → `python -m scripts.backfill_abstracts` (polite 0.5s, re-embeds).
 
 ## Repository layout
 

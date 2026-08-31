@@ -104,6 +104,43 @@ def test_ranked_bm25_pagination_deterministic(pg_client, pg_session):
     assert p1["total"] == 3 and p2["total"] == 3
 
 
+def test_hybrid_fuses_bm25_and_vector(pg_client, pg_session):
+    from app.services.embeddings import FastEmbedProvider
+
+    data = _seed_small(pg_session)
+    # embed the three small papers so dense side has vectors
+    provider = FastEmbedProvider()
+    embed_papers_by_ids(pg_session, provider, [data["high"].id, data["low_new"].id, data["mid"].id])
+    pg_session.commit()
+
+    hybrid = pg_client.get("/papers?q=attention&hybrid=true").json()
+    assert hybrid["total"] == 3
+    assert len(hybrid["items"]) == 3
+    # hybrid order is RRF, not pure BM25 nor pure year
+    ranked = pg_client.get("/papers?q=attention&ranked=true").json()
+    legacy = pg_client.get("/papers?q=attention").json()
+    assert hybrid["items"] != ranked["items"]
+    assert hybrid["items"] != legacy["items"]
+
+
+def test_hybrid_filters_after(pg_client, pg_session):
+    from app.services.embeddings import FastEmbedProvider
+
+    data = _seed_small(pg_session)
+    provider = FastEmbedProvider()
+    embed_papers_by_ids(pg_session, provider, [data["high"].id, data["low_new"].id, data["mid"].id])
+    pg_session.commit()
+
+    # filters applied after RRF — year=2024 should keep only mid
+    filtered = pg_client.get("/papers?q=attention&hybrid=true&year=2024").json()
+    assert filtered["total"] == 1
+    assert filtered["items"][0]["id"] == data["mid"].id
+
+    # topic filter
+    by_topic = pg_client.get(f"/papers?q=attention&hybrid=true&topic={data['nlp'].slug}").json()
+    assert by_topic["total"] == 2
+
+
 def test_similar_ann_uses_vectors_when_present(pg_client, pg_session):
     cv = add_topic(pg_session, "computer-vision")
     nlp = add_topic(pg_session, "large-language-models")

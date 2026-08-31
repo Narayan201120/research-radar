@@ -6,6 +6,8 @@ interface HomeSearchParams {
   topic?: string;
   author?: string;
   page?: string;
+  ranked?: string;
+  hybrid?: string;
 }
 
 export default async function HomePage({
@@ -22,6 +24,8 @@ export default async function HomePage({
         initialTopic={params.topic ?? ""}
         initialAuthor={params.author ?? ""}
         initialPage={Math.max(1, Number(params.page) || 1)}
+        initialRanked={params.ranked === "true"}
+        initialHybrid={params.hybrid === "true"}
       />
     </main>
   );

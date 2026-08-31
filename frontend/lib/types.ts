@@ -49,4 +49,6 @@ export interface PaperQuery {
   author?: string;
   page?: number;
   page_size?: number;
+  ranked?: boolean;
+  hybrid?: boolean;
 }

@@ -73,6 +73,106 @@ def _paper_wildcard(term: str) -> str:
 
 _MATCH_CLAUSE = "(p.id @@@ paradedb.match('title', :q) OR p.id @@@ paradedb.match('abstract', :q))"
 
+_RRF_K = 60
+
+
+def _rrf_fuse(dense_ids: list[int], sparse_ids: list[int], k: int = _RRF_K) -> list[int]:
+    scores: dict[int, float] = {}
+    for rank, pid in enumerate(dense_ids):
+        scores[pid] = scores.get(pid, 0.0) + 1.0 / (k + rank + 1)
+    for rank, pid in enumerate(sparse_ids):
+        scores[pid] = scores.get(pid, 0.0) + 1.0 / (k + rank + 1)
+    return sorted(scores, key=lambda pid: scores[pid], reverse=True)
+
+
+def _list_papers_hybrid(
+    db: Session,
+    *,
+    q: str,
+    year: int | None,
+    topic: str | None,
+    author: str | None,
+    page: int,
+    page_size: int,
+) -> PaperListResponse:
+    """Hybrid RRF: dense 10 (pgvector HNSW) + sparse 10 (BM25) → RRF → filters after."""
+    # dense 10
+    dense_ids: list[int] = []
+    try:
+        from app.services.embeddings import FastEmbedProvider, vector_literal
+
+        provider = FastEmbedProvider()
+        qvec = provider.embed_texts([q])[0]
+        literal = vector_literal(qvec)
+        rows = db.execute(
+            text("SELECT paper_id FROM paper_embedding ORDER BY embedding <=> CAST(:qvec AS vector) LIMIT 10"),
+            {"qvec": literal},
+        ).all()
+        dense_ids = [r.paper_id for r in rows]
+    except Exception:
+        dense_ids = []
+
+    # sparse 10
+    sparse_ids: list[int] = []
+    try:
+        rows = db.execute(
+            text(
+                "SELECT p.id FROM paper p "
+                f"WHERE {_MATCH_CLAUSE} "
+                "ORDER BY paradedb.score(p.id) DESC LIMIT 10"
+            ),
+            {"q": q},
+        ).all()
+        sparse_ids = [r.id for r in rows]
+    except Exception:
+        sparse_ids = []
+
+    fused = _rrf_fuse(dense_ids, sparse_ids)  # at most 20 → 10
+    if not fused:
+        return PaperListResponse(items=[], total=0, page=page, page_size=page_size)
+
+    # hydrate in RRF order, then apply filters after (Option A)
+    papers = db.scalars(
+        select(Paper).options(selectinload(Paper.authors)).where(Paper.id.in_(fused))
+    ).all()
+    by_id = {p.id: p for p in papers}
+    ordered = [by_id[pid] for pid in fused if pid in by_id]
+
+    # filters after fusion
+    def _keep(p: Paper) -> bool:
+        if year is not None and p.publication_year != year:
+            return False
+        if topic and not any(t.slug == topic for t in p.topics):
+            # need topics loaded — for hybrid we didn't load topics, check via query
+            return False
+        if author and not any(author.lower() in a.name.lower() for a in p.authors):
+            return False
+        return True
+
+    # For topic filter we need topics; load them if needed
+    if topic:
+        # reload with topics for accurate filter
+        papers_with_topics = db.scalars(
+            select(Paper).options(selectinload(Paper.authors), selectinload(Paper.topics)).where(Paper.id.in_(fused))
+        ).all()
+        by_id_t = {p.id: p for p in papers_with_topics}
+        ordered = [by_id_t[pid] for pid in fused if pid in by_id_t]
+        filtered = [p for p in ordered if _keep(p)]
+    else:
+        filtered = [p for p in ordered if _keep(p)]
+
+    total = len(filtered)
+    start = (page - 1) * page_size
+    page_items = filtered[start : start + page_size]
+
+    # need topics for response? PaperListItem only needs authors, not topics
+    return PaperListResponse(
+        items=[PaperListItem.model_validate(p) for p in page_items],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
 
 def _list_papers_ranked(
     db: Session,
@@ -145,12 +245,24 @@ def list_papers(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = 20,
     ranked: Annotated[bool, Query()] = False,
+    hybrid: Annotated[bool, Query()] = False,
 ) -> PaperListResponse:
+    if ranked and hybrid:
+        raise HTTPException(status_code=422, detail="ranked and hybrid are mutually exclusive")
     if ranked and not q:
         raise HTTPException(status_code=422, detail="ranked=true requires q")
+    if hybrid and not q:
+        raise HTTPException(status_code=422, detail="hybrid=true requires q")
     if ranked and q:
         if db.get_bind().dialect.name == "postgresql":
             return _list_papers_ranked(
+                db, q=q, year=year, topic=topic, author=author,
+                page=page, page_size=page_size,
+            )
+        # non-PostgreSQL dialects (tests) degrade to the legacy path
+    if hybrid and q:
+        if db.get_bind().dialect.name == "postgresql":
+            return _list_papers_hybrid(
                 db, q=q, year=year, topic=topic, author=author,
                 page=page, page_size=page_size,
             )

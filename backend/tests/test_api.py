@@ -255,6 +255,23 @@ def test_ranked_degrades_to_legacy_on_non_postgres(client, session):
     assert {item["id"] for item in ranked["items"]} >= {data["attention"].id}
 
 
+def test_hybrid_requires_q(client):
+    assert client.get("/papers?hybrid=true").status_code == 422
+
+
+def test_hybrid_and_ranked_mutually_exclusive(client):
+    assert client.get("/papers?q=attention&ranked=true&hybrid=true").status_code == 422
+
+
+def test_hybrid_degrades_to_legacy_on_non_postgres(client, session):
+    """SQLite has no pg_search/pgvector, so hybrid degrades to ILIKE."""
+    data = _seed(client, session)
+    legacy = client.get("/papers?q=attention").json()
+    hybrid = client.get("/papers?q=attention&hybrid=true").json()
+    assert hybrid["total"] == legacy["total"]
+    assert {item["id"] for item in hybrid["items"]} >= {data["attention"].id}
+
+
 def test_health_ok(client):
     response = client.get("/health")
     assert response.status_code == 200
