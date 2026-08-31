@@ -64,8 +64,6 @@ def main() -> int:
                 recovered_total += recovered
                 remaining -= batch
                 logger.info("batch %s recovered %s (total %s)", batch, recovered, recovered_total)
-                if recovered == 0:
-                    break
 
         logger.info("backfill done: recovered %s / %s attempted", recovered_total, min(args.limit, recoverable))
         return 0
