@@ -143,6 +143,7 @@ def recover_missing_abstracts(
     session: Session,
     *,
     limit: int = 20,
+    offset: int = 0,
     transport: httpx.BaseTransport | None = None,
     embedding_provider: EmbeddingProvider | None = None,
 ) -> int:
@@ -155,7 +156,11 @@ def recover_missing_abstracts(
     if transport is None and os.getenv("PYTEST_CURRENT_TEST"):
         return 0
     rows = session.execute(
-        select(Paper.id, Paper.doi).where(Paper.abstract.is_(None), Paper.doi.is_not(None)).limit(limit)
+        select(Paper.id, Paper.doi)
+        .where(Paper.abstract.is_(None), Paper.doi.is_not(None))
+        .order_by(Paper.id)
+        .offset(offset)
+        .limit(limit)
     ).all()
     recovered = 0
     for pid, doi in rows:

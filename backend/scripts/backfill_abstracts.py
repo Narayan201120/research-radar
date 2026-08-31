@@ -54,14 +54,16 @@ def main() -> int:
 
         recovered_total = 0
         remaining = min(args.limit, recoverable)
+        attempted = 0
         while remaining > 0:
             batch = min(args.batch, remaining)
             with SessionLocal() as batch_session:
                 recovered = recover_missing_abstracts(
-                    batch_session, limit=batch, embedding_provider=embedding_provider
+                    batch_session, limit=batch, offset=attempted, embedding_provider=embedding_provider
                 )
                 batch_session.commit()
                 recovered_total += recovered
+                attempted += batch
                 remaining -= batch
                 logger.info("batch %s recovered %s (total %s)", batch, recovered, recovered_total)
 
