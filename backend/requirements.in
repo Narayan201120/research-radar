@@ -6,4 +6,6 @@ pydantic-settings
 alembic
 httpx
 fastembed==0.8.0
+beautifulsoup4
+lxml
 pytest

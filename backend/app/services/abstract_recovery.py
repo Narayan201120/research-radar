@@ -1,11 +1,12 @@
-"""Abstract recovery via Crossref then arXiv.
+"""Abstract recovery via Crossref then arXiv then publisher HTML.
 
 Waterfall: for a paper with a DOI, try Crossref's JATS abstract first
 (``api.crossref.org/works/{doi}`` → ``message.abstract``). arXiv's
 DataCite prefix ``10.48550`` is not in Crossref, so fallback is
 ``export.arxiv.org/api/query?id_list={arxiv_id}`` → Atom ``<summary>``.
-
-No publisher HTML scrape — only those two APIs, bounded and polite.
+Final fallback fetches ``https://doi.org/{doi}`` HTML and extracts
+``citation_abstract`` meta or publisher sections (Springer/Elsevier).
+Bounded and polite.
 """
 
 from __future__ import annotations
@@ -116,7 +117,7 @@ def recover_abstract_for_paper(
     locations: list[dict] | None = None,
     transport: httpx.BaseTransport | None = None,
 ) -> tuple[str | None, str | None]:
-    """Try Crossref then arXiv. Returns (abstract, source) or (None, None)."""
+    """Try Crossref then arXiv then HTML. Returns (abstract, source) or (None, None)."""
     doi = (paper.doi or "").strip()
     if not doi:
         return None, None
@@ -126,6 +127,15 @@ def recover_abstract_for_paper(
     ar = fetch_arxiv_abstract(doi, locations, transport=transport)
     if ar:
         return ar, "arxiv"
+    # HTML fallback — only after Crossref+arXiv miss
+    try:
+        from app.services.publisher_extract import fetch_html_abstract, source_for_doi
+
+        html = fetch_html_abstract(doi, locations, transport=transport)
+        if html:
+            return html, source_for_doi(doi)
+    except Exception:
+        pass
     return None, None
 
 

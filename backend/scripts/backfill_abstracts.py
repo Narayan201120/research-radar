@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Backfill missing abstracts via Crossref then arXiv.
+"""Backfill missing abstracts via Crossref then arXiv then HTML.
 
 Usage:
     python -m scripts.backfill_abstracts [--dry-run] [--limit 100]
 
 Fills ``paper.abstract IS NULL`` rows that have a DOI, using the
-``abstract_recovery`` waterfall (Crossref JATS → arXiv Atom). Each recovered
-paper is re-embedded so BM25 and HNSW see the new text.
+``abstract_recovery`` waterfall (Crossref JATS → arXiv Atom → publisher HTML).
+Each recovered paper is re-embedded so BM25 and HNSW see the new text.
 """
 
 from __future__ import annotations

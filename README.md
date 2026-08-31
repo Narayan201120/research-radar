@@ -13,7 +13,7 @@ with **BM25 ranked search**, **RRF hybrid**, **Find Similar Papers** powered by 
 | Database   | PostgreSQL 16 via `paradedb/paradedb:0.25.3-pg16` (pgvector + pg_search BM25, single image) |
 | Search     | ParadeDB BM25 (`paper_search_idx` on `title`+`abstract`, `paradedb.score` ranking) with ILIKE fallback; `?ranked=true` BM25, `?hybrid=true` RRF `K=60` (vector 10 + BM25 10 → 10, filters after, `422` if both) |
 | Similarity | Semantic `paper_embedding` (384-d `all-MiniLM-L6-v2` via fastembed ONNX, HNSW `vector_cosine_ops`, ANN at read time, `O(Δ)` write + `O(log N)` read) — `paper_similarity` snapshot removed in `a1b2c3d4e5f6` |
-| Tests      | pytest (81 tests: 74 SQLite hermetic + 7 Postgres integration — `pytest -m postgres` for BM25/ANN/hybrid) |
+| Tests      | pytest (86 tests: 79 SQLite hermetic + 7 Postgres integration — `pytest -m postgres` for BM25/ANN/hybrid) |
 | Infra      | Docker Compose (postgres + backend + frontend + scheduler sidecar) |
 
 ## Quick start
@@ -54,7 +54,7 @@ next tick without taking anything down.
   duplicates author/topic relations, and writes are crash-consistent (data +
   watermark + embeddings share the same transaction).
 - Normalized schema: `paper` (`abstract_source`/`abstract_recovered_at` provenance in `b2c3d4e5f6a7`), `author`, `topic`, `paper_author`, `paper_topic`,
-  `paper_embedding` (`vector(384)` HNSW), `ingest_state` (`paper_similarity` dropped in `a1b2c3d4e5f6`). Abstract recovery: `paper.abstract IS NULL` → Crossref JATS → arXiv Atom waterfall (57 recoverable post re-seed, `1/57` recovered live via `arxiv` — `http://arxiv.org/abs/2408.16932` for dead `10.1007/9` — `56` remain title-only, `abstract_source` provenance, re-embedded, daily hook `LIMIT 20`).
+  `paper_embedding` (`vector(384)` HNSW), `ingest_state` (`paper_similarity` dropped in `a1b2c3d4e5f6`). Abstract recovery: `paper.abstract IS NULL` → Crossref JATS → arXiv Atom → publisher HTML (`citation_abstract` meta or Springer `#Abs1`/`Elsevier author` sections, `springer`/`elsevier`/`html_generic` provenance, `beautifulsoup4`/`lxml`) waterfall (57 recoverable post re-seed, `1/57` recovered live via `arxiv` — `http://arxiv.org/abs/2408.16932` for dead `10.1007/9` — `56` remain targeting HTML, re-embedded, daily hook `LIMIT 20`).
 - Live corpus: `ingest_state` watermarks (`last_full_ingest_at`/`last_incremental_at`
   per topic) drive `from_updated_date` delta fetches (`updated_date:desc`) capped at
   200/topic; `backfill_watermarks` upgrades pre-existing static volumes.
@@ -135,23 +135,23 @@ Top-5 similar papers, self-excluded by construction, scores rounded to 4 decimal
 ## Tests
 
 ```bash
-docker compose exec backend python -m pytest        # all tests (81: 74 hermetic + 7 gate live — hybrid adds 2)
-python -m pytest -q                                 # hermetic from backend/ with local venv (74, 7 skipped without Docker)
+docker compose exec backend python -m pytest        # all tests (86: 79 hermetic + 7 gate live — hybrid adds 2, HTML adds 5)
+python -m pytest -q                                 # hermetic from backend/ with local venv (79, 7 skipped without Docker)
 python -m pytest -m postgres -q                     # Postgres gate only (7 tests, requires ParadeDB — BM25/ANN/hybrid)
 ```
 
-81 tests: 74 hermetic per-test in-memory SQLite schema (no network) + 7
+86 tests: 79 hermetic per-test in-memory SQLite schema (no network) + 7
 Postgres/ParadeDB integration — API endpoints (search/filters/pagination/404s/LIKE
 escaping, `?ranked`/`?hybrid` validation `422` and dialect-guard degradation, `hybrid` RRF `K=60` filters-after), `similar` returns
 `[]` on SQLite (no vector/HNSW), ingest idempotency (fake client fetched twice →
 0 new rows), the real OpenAlex client (httpx `MockTransport`), abstract
-reconstruction (including `abstract_recovery` Crossref→arXiv waterfall), DOI
+reconstruction (including `abstract_recovery` Crossref→arXiv→HTML waterfall, `publisher_extract` meta/section), DOI
 verifier (private-IP block), and live BM25 relevance + ANN similarity + hybrid fusion (`tests/test_postgres.py`,
 `HashingFakeProvider`/`FastEmbedProvider`, TRUNCATE per test). Hermetic stays green without Docker
 (7 skipped); CI `services: postgres` (`paradedb/paradedb:0.25.3-pg16`) runs both
-steps for 81 passed.
+steps for 86 passed.
 
-Abstract backfill: `docker compose exec backend python -m scripts.backfill_abstracts --dry-run` (57 recoverable, `1/57` via `arxiv`) → `python -m scripts.backfill_abstracts` (polite 0.5s, re-embeds).
+Abstract backfill: `docker compose exec backend python -m scripts.backfill_abstracts --dry-run` (57 recoverable, `1/57` via `arxiv`, remainder via HTML) → `python -m scripts.backfill_abstracts` (polite 0.5s, re-embeds).
 
 ## Repository layout
 
@@ -160,7 +160,7 @@ backend/
   app/api/          # FastAPI routes (papers, health)
   app/models/       # SQLAlchemy models (paper now has abstract_source/recovered_at)
   app/schemas/      # Pydantic response models
-  app/services/     # ingest, openalex client, embeddings, abstract_recovery (Crossref→arXiv waterfall)
+  app/services/     # ingest, openalex client, embeddings, abstract_recovery (Crossref→arXiv→HTML waterfall), publisher_extract
   alembic/          # migrations (ingest_state, vector/bm25 extensions, paper_embedding + hnsw, paper_search_idx, drop paper_similarity, abstract provenance)
   scripts/          # ingest_openalex (--boot, --incremental/--since), scheduler, backfill_embeddings, backfill_abstracts
   tests/            # pytest suite (conftest SQLite shim, @pytest.mark.postgres gate, abstract_recovery)
