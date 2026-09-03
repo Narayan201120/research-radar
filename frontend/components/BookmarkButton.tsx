@@ -8,7 +8,14 @@ export default function BookmarkButton({ paperId }: { paperId: number }) {
   const [bookmarked, setBookmarked] = useState(false);
 
   useEffect(() => {
-    setBookmarked(isBookmarked(paperId));
+    const refresh = () => setBookmarked(isBookmarked(paperId));
+    refresh();
+    window.addEventListener("rr:bookmarks", refresh);
+    window.addEventListener("storage", refresh);
+    return () => {
+      window.removeEventListener("rr:bookmarks", refresh);
+      window.removeEventListener("storage", refresh);
+    };
   }, [paperId]);
 
   return (

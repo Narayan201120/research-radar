@@ -1,12 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 
 import PaperCard from "@/components/PaperCard";
 import Pagination from "@/components/Pagination";
-import { fetchPapers, TOPIC_SLUGS, YEARS } from "@/lib/api";
-import { getBookmarkedIds, getHistoryIds } from "@/lib/bookmarks";
+import { fetchPaper, fetchPapers, TOPIC_SLUGS, YEARS } from "@/lib/api";
+import {
+  clearHistory,
+  exportBookmarksJson,
+  getBookmarkedIds,
+  getHistoryIds,
+  importBookmarks,
+  parseBookmarksJson,
+} from "@/lib/bookmarks";
 import { useDebouncedValue } from "@/lib/useDebouncedValue";
 import type { PaperListResponse } from "@/lib/types";
 
@@ -21,6 +28,7 @@ interface SearchExplorerProps {
   initialPage: number;
   initialRanked?: boolean;
   initialHybrid?: boolean;
+  initialSaved?: boolean;
 }
 
 export default function SearchExplorer({
@@ -31,6 +39,7 @@ export default function SearchExplorer({
   initialPage,
   initialRanked = false,
   initialHybrid = false,
+  initialSaved = false,
 }: SearchExplorerProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -42,9 +51,16 @@ export default function SearchExplorer({
   const [page, setPage] = useState(initialPage);
   const [ranked, setRanked] = useState(initialRanked);
   const [hybrid, setHybrid] = useState(initialHybrid);
-  const [showSaved, setShowSaved] = useState(false);
+  const [showSaved, setShowSaved] = useState(initialSaved);
   const [bookmarkedIds, setBookmarkedIds] = useState<Set<number>>(new Set());
   const [historyIds, setHistoryIds] = useState<number[]>([]);
+  const [historyDetails, setHistoryDetails] = useState<
+    Record<number, { title: string; year: number }>
+  >({});
+  const [historyResolved, setHistoryResolved] = useState(false);
+  const [replaceImport, setReplaceImport] = useState(false);
+  const [importMessage, setImportMessage] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const [result, setResult] = useState<PaperListResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -66,7 +82,7 @@ export default function SearchExplorer({
   );
 
   const syncUrl = useCallback(
-    (value: { q: string; year: string; topic: string; author: string; page: number; ranked: boolean; hybrid: boolean }) => {
+    (value: { q: string; year: string; topic: string; author: string; page: number; ranked: boolean; hybrid: boolean; showSaved: boolean }) => {
       const search = new URLSearchParams();
       if (value.q) search.set("q", value.q);
       if (value.year) search.set("year", value.year);
@@ -75,13 +91,14 @@ export default function SearchExplorer({
       if (value.page > 1) search.set("page", String(value.page));
       if (value.ranked) search.set("ranked", "true");
       if (value.hybrid) search.set("hybrid", "true");
+      if (value.showSaved) search.set("saved", "true");
       const qs = search.toString();
       router.replace(`${pathname}${qs ? `?${qs}` : ""}`, { scroll: false });
     },
     [pathname, router]
   );
 
-  const compact = { q: debouncedQ, year, topic, author, page, ranked, hybrid };
+  const compact = { q: debouncedQ, year, topic, author, page, ranked, hybrid, showSaved };
 
   useEffect(() => {
     const refresh = () => {
@@ -97,20 +114,57 @@ export default function SearchExplorer({
     };
   }, []);
 
-  const displayedItems = (() => {
-    if (!result) return [];
-    if (showSaved) return result.items.filter((p) => bookmarkedIds.has(p.id));
-    return result.items;
-  })();
-
-  const displayedTotal = showSaved ? displayedItems.length : result?.total ?? 0;
-
+  // History: batch-resolve first 10 ids to title+year (skip 404s).
   useEffect(() => {
+    const ids = historyIds.slice(0, 10);
+    if (ids.length === 0) {
+      setHistoryDetails({});
+      setHistoryResolved(true);
+      return;
+    }
+    let cancelled = false;
+    setHistoryResolved(false);
+    Promise.allSettled(ids.map((id) => fetchPaper(String(id)))).then((outcomes) => {
+      if (cancelled) return;
+      const next: Record<number, { title: string; year: number }> = {};
+      outcomes.forEach((r, i) => {
+        if (r.status === "fulfilled") {
+          next[ids[i]] = { title: r.value.title, year: r.value.publication_year };
+        }
+        // rejected (404/network): skip
+      });
+      setHistoryDetails(next);
+      setHistoryResolved(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [historyIds]);
+
+  // Option A: intersect-then-rank on the server via ids filter.
+  useEffect(() => {
+    if (showSaved && bookmarkedIds.size === 0) {
+      setResult({ items: [], total: 0, page, page_size: PAGE_SIZE });
+      setLoading(false);
+      setError(null);
+      return;
+    }
     setLoading(true);
     setError(null);
     let cancelled = false;
 
-    fetchPapers({ q: debouncedQ, year, topic, author, page, page_size: PAGE_SIZE, ranked: ranked || undefined, hybrid: hybrid || undefined })
+    const idsParam = showSaved ? [...bookmarkedIds].join(",") : undefined;
+    fetchPapers({
+      q: debouncedQ,
+      year,
+      topic,
+      author,
+      page,
+      page_size: PAGE_SIZE,
+      ranked: ranked || undefined,
+      hybrid: hybrid || undefined,
+      ids: idsParam,
+    })
       .then((data) => {
         if (!cancelled) setResult(data);
       })
@@ -124,13 +178,73 @@ export default function SearchExplorer({
     return () => {
       cancelled = true;
     };
-  }, [debouncedQ, year, topic, author, page, ranked, hybrid]);
+  }, [debouncedQ, year, topic, author, page, ranked, hybrid, showSaved, bookmarkedIds]);
 
   useEffect(() => {
     syncUrl(compact);
   }, [compact, syncUrl]);
 
-  const totalPages = result ? Math.max(1, Math.ceil((showSaved ? displayedTotal : result.total) / PAGE_SIZE)) : 1;
+  const handleExport = useCallback(() => {
+    const json = exportBookmarksJson();
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "bookmarks.json";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }, []);
+
+  const handleImportFile = useCallback(
+    async (file: File) => {
+      try {
+        const text = await file.text();
+        const parsed = parseBookmarksJson(text);
+        const { imported, total } = importBookmarks(parsed, { replace: replaceImport });
+        setImportMessage(`Imported ${imported} bookmark${imported === 1 ? "" : "s"} (${total} total).`);
+        window.dispatchEvent(new Event("rr:bookmarks"));
+        setBookmarkedIds(getBookmarkedIds());
+      } catch (e) {
+        setImportMessage(e instanceof Error ? e.message : "Import failed");
+      }
+    },
+    [replaceImport]
+  );
+
+  const handleClearHistory = useCallback(() => {
+    clearHistory();
+    setHistoryIds([]);
+    setHistoryDetails({});
+    setHistoryResolved(true);
+  }, []);
+
+  const hasFilters = Boolean(debouncedQ || year || topic || author);
+  const items = result?.items ?? [];
+  const total = result?.total ?? 0;
+  const totalPages = result ? Math.max(1, Math.ceil(result.total / PAGE_SIZE)) : 1;
+
+  const countLabel = result
+    ? showSaved
+      ? hasFilters
+        ? `${total.toLocaleString()} saved match${total === 1 ? "" : "es"}`
+        : `${total.toLocaleString()} saved paper${total === 1 ? "" : "s"}`
+      : `${total.toLocaleString()} paper${total === 1 ? "" : "s"} found`
+    : loading
+      ? "Searching…"
+      : "";
+
+  const emptyLabel = showSaved
+    ? hasFilters
+      ? `No saved papers match ${debouncedQ || "these filters"}. Clear q to see all ${bookmarkedIds.size} saved.`
+      : bookmarkedIds.size === 0
+        ? "No saved papers yet — save some with ☆ Save."
+        : "No saved papers."
+    : "No papers match your filters.";
+
+  const showHistory =
+    historyIds.length > 0 && !q && !year && !topic && !author && !ranked && !hybrid && !showSaved;
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8">
@@ -241,7 +355,10 @@ export default function SearchExplorer({
             <input
               type="checkbox"
               checked={showSaved}
-              onChange={(e) => setShowSaved(e.target.checked)}
+              onChange={(e) => {
+                setShowSaved(e.target.checked);
+                setPage(1);
+              }}
               className="rounded border-slate-300"
             />
             <span className="text-slate-600">★ Saved ({bookmarkedIds.size})</span>
@@ -258,6 +375,49 @@ export default function SearchExplorer({
             </button>
           )}
         </div>
+        <div className="flex flex-wrap items-center gap-3 text-sm">
+          <button
+            onClick={handleExport}
+            className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-slate-600 hover:bg-slate-50"
+          >
+            Export saved
+          </button>
+          <label className="flex items-center gap-2 text-slate-600">
+            <input
+              ref={fileRef}
+              type="file"
+              accept="application/json,.json"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void handleImportFile(f);
+                e.target.value = "";
+              }}
+              aria-label="Import bookmarks JSON"
+            />
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={() => fileRef.current?.click()}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") fileRef.current?.click();
+              }}
+              className="cursor-pointer rounded-md border border-slate-300 bg-white px-2 py-1.5 text-slate-600 hover:bg-slate-50"
+            >
+              Import saved
+            </span>
+          </label>
+          <label className="flex items-center gap-2 text-slate-600">
+            <input
+              type="checkbox"
+              checked={replaceImport}
+              onChange={(e) => setReplaceImport(e.target.checked)}
+              className="rounded border-slate-300"
+            />
+            <span>Replace on import</span>
+          </label>
+          {importMessage && <span className="text-slate-500">{importMessage}</span>}
+        </div>
       </div>
 
       {error && (
@@ -266,36 +426,47 @@ export default function SearchExplorer({
         </p>
       )}
 
-      {historyIds.length > 0 && !q && !year && !topic && !author && !ranked && !hybrid && !showSaved && (
+      {showHistory && (
         <div className="mt-4 rounded-lg border border-slate-200 bg-white px-4 py-3">
-          <p className="text-xs font-medium text-slate-500">Recently viewed</p>
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-medium text-slate-500">Recently viewed</p>
+            <button
+              onClick={handleClearHistory}
+              className="text-xs text-indigo-600 hover:text-indigo-800"
+            >
+              Clear history
+            </button>
+          </div>
           <div className="mt-2 flex flex-wrap gap-2">
-            {historyIds.slice(0, 10).map((hid) => (
-              <a key={hid} href={`/papers/${hid}`} className="rounded bg-slate-100 px-2 py-1 text-xs text-slate-700 hover:bg-indigo-50">
-                #{hid}
-              </a>
-            ))}
+            {historyIds.slice(0, 10).map((hid) => {
+              const meta = historyDetails[hid];
+              if (!meta && historyResolved) return null;
+              return (
+                <a
+                  key={hid}
+                  href={`/papers/${hid}`}
+                  title={meta?.title ?? `#${hid}`}
+                  className="max-w-xs truncate rounded bg-slate-100 px-2 py-1 text-xs text-slate-700 hover:bg-indigo-50"
+                >
+                  {meta ? `${meta.title} (${meta.year})` : `#${hid}`}
+                </a>
+              );
+            })}
           </div>
         </div>
       )}
 
       <div className="mt-6">
         <p className="text-sm text-slate-400" aria-live="polite">
-          {result
-            ? showSaved
-              ? `${displayedTotal.toLocaleString()} saved paper${displayedTotal === 1 ? "" : "s"} on this page`
-              : `${result.total.toLocaleString()} paper${result.total === 1 ? "" : "s"} found`
-            : loading
-              ? "Searching…"
-              : ""}
+          {countLabel}
         </p>
         <div className="mt-3 grid gap-3">
-          {(showSaved ? displayedItems : result?.items ?? []).map((paper) => (
+          {items.map((paper) => (
             <PaperCard key={paper.id} paper={paper} />
           ))}
-          {(showSaved ? displayedItems.length === 0 : result?.items.length === 0) && (
+          {result && items.length === 0 && (
             <p className="rounded-lg border border-slate-200 bg-white px-4 py-8 text-center text-slate-400">
-              {showSaved ? "No saved papers on this page — save some with ☆ Save." : "No papers match your filters."}
+              {emptyLabel}
             </p>
           )}
         </div>

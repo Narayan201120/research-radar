@@ -98,10 +98,11 @@ Query parameters (all optional except `q` when `ranked/hybrid=true`):
 | `year`     | —       | Exact `publication_year` |
 | `topic`    | —       | Topic slug (`computer-vision` / `large-language-models`) |
 | `author`   | —       | Case-insensitive substring on author name |
+| `ids`      | —       | Comma id list (max 100, invalid ignored, empty → empty). AND-combined (Option A intersect-then-rank for Saved) |
 | `page`     | 1       | ≥ 1 |
 | `page_size`| 20      | 1..100 |
 
-Filters combine with AND in both modes. Sort: legacy `publication_year DESC, id DESC`; ranked `paradedb.score DESC, publication_year DESC, id DESC` (deterministic pagination). Ranked results are relevance-ordered; the `q` string is passed directly to ParadeDB query parsing (Tantivy).
+Filters combine with AND in both modes. Sort: legacy `publication_year DESC, id DESC`; ranked `paradedb.score DESC, publication_year DESC, id DESC` (deterministic pagination). Ranked results are relevance-ordered; the `q` string is passed directly to ParadeDB query parsing (Tantivy). `ids` enables full-corpus Saved search (`?ids=1,2,3&saved` client flow).
 
 ```json
 {

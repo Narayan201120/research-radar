@@ -67,6 +67,29 @@ def _parse_paper_id(raw: str) -> int | None:
         return None
 
 
+def _parse_ids(s: str | None) -> list[int] | None:
+    """Parse comma-separated id list: strip, int-parse, dedupe preserve order, cap 100, ignore invalid."""
+    if s is None:
+        return None
+    seen: set[int] = set()
+    out: list[int] = []
+    for part in s.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            val = int(part)
+        except ValueError:
+            continue
+        if val in seen:
+            continue
+        seen.add(val)
+        out.append(val)
+        if len(out) >= 100:
+            break
+    return out
+
+
 def _paper_wildcard(term: str) -> str:
     return f"%{_escape_like(term)}%"
 
@@ -94,6 +117,7 @@ def _list_papers_hybrid(
     author: str | None,
     page: int,
     page_size: int,
+    ids: list[int] | None = None,
 ) -> PaperListResponse:
     """Hybrid RRF: dense 10 (pgvector HNSW) + sparse 10 (BM25) → RRF → filters after."""
     # dense 10
@@ -128,6 +152,9 @@ def _list_papers_hybrid(
         sparse_ids = []
 
     fused = _rrf_fuse(dense_ids, sparse_ids)  # at most 20 → 10
+    if ids is not None:
+        idset = set(ids)
+        fused = [pid for pid in fused if pid in idset]
     if not fused:
         return PaperListResponse(items=[], total=0, page=page, page_size=page_size)
 
@@ -183,11 +210,14 @@ def _list_papers_ranked(
     author: str | None,
     page: int,
     page_size: int,
+    ids: list[int] | None = None,
 ) -> PaperListResponse:
     """BM25-relevance listing via the paper_search_idx ParadeDB index.
 
     Deterministic pagination: score DESC, then year DESC, id DESC.
     """
+    if ids is not None and len(ids) == 0:
+        return PaperListResponse(items=[], total=0, page=page, page_size=page_size)
     filters = ""
     params: dict[str, object] = {"q": q}
     if year is not None:
@@ -205,6 +235,10 @@ def _list_papers_ranked(
             " WHERE pa.paper_id = p.id AND a.name ILIKE :author_wild)"
         )
         params["author_wild"] = _paper_wildcard(author)
+    if ids is not None:
+        id_list = ",".join(str(i) for i in ids)
+        if id_list:
+            filters += f" AND p.id IN ({id_list})"
 
     where = f"WHERE {_MATCH_CLAUSE}{filters}"
     total = int(
@@ -219,16 +253,16 @@ def _list_papers_ranked(
         ),
         {**params, "limit": page_size, "offset": (page - 1) * page_size},
     ).all()
-    ids = [row.id for row in rows]
-    if not ids:
+    row_ids = [row.id for row in rows]
+    if not row_ids:
         return PaperListResponse(items=[], total=total, page=page, page_size=page_size)
 
     papers = db.scalars(
-        select(Paper).options(selectinload(Paper.authors)).where(Paper.id.in_(ids))
+        select(Paper).options(selectinload(Paper.authors)).where(Paper.id.in_(row_ids))
     ).all()
     by_id = {p.id: p for p in papers}
     return PaperListResponse(
-        items=[PaperListItem.model_validate(by_id[pid]) for pid in ids if pid in by_id],
+        items=[PaperListItem.model_validate(by_id[pid]) for pid in row_ids if pid in by_id],
         total=total,
         page=page,
         page_size=page_size,
@@ -246,6 +280,7 @@ def list_papers(
     page_size: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = 20,
     ranked: Annotated[bool, Query()] = False,
     hybrid: Annotated[bool, Query()] = False,
+    ids: str | None = None,
 ) -> PaperListResponse:
     if ranked and hybrid:
         raise HTTPException(status_code=422, detail="ranked and hybrid are mutually exclusive")
@@ -253,22 +288,27 @@ def list_papers(
         raise HTTPException(status_code=422, detail="ranked=true requires q")
     if hybrid and not q:
         raise HTTPException(status_code=422, detail="hybrid=true requires q")
+    parsed_ids = _parse_ids(ids)
+    if parsed_ids is not None and len(parsed_ids) == 0:
+        return PaperListResponse(items=[], total=0, page=page, page_size=page_size)
     if ranked and q:
         if db.get_bind().dialect.name == "postgresql":
             return _list_papers_ranked(
                 db, q=q, year=year, topic=topic, author=author,
-                page=page, page_size=page_size,
+                page=page, page_size=page_size, ids=parsed_ids,
             )
         # non-PostgreSQL dialects (tests) degrade to the legacy path
     if hybrid and q:
         if db.get_bind().dialect.name == "postgresql":
             return _list_papers_hybrid(
                 db, q=q, year=year, topic=topic, author=author,
-                page=page, page_size=page_size,
+                page=page, page_size=page_size, ids=parsed_ids,
             )
         # non-PostgreSQL dialects (tests) degrade to the legacy path
 
     conditions = []
+    if parsed_ids is not None:
+        conditions.append(Paper.id.in_(parsed_ids))
     if q:
         terms = [t for t in q.split() if t]
         term_conditions = [

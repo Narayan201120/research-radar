@@ -3,14 +3,17 @@ import BookmarkButton from "@/components/BookmarkButton";
 
 export default function PaperCard({ paper }: { paper: PaperListItem }) {
   return (
-    <a
-      href={`/papers/${paper.id}`}
-      className="block min-w-0 rounded-lg border border-slate-200 bg-white p-4 shadow-sm transition hover:border-indigo-300 hover:shadow"
-    >
+    <div className="block min-w-0 rounded-lg border border-slate-200 bg-white p-4 shadow-sm transition hover:border-indigo-300 hover:shadow">
       <div className="flex items-start justify-between gap-4">
-        <h3 className="text-base font-semibold text-slate-900 line-clamp-2">
-          {paper.title}
-        </h3>
+        <a
+          href={`/papers/${paper.id}`}
+          title={paper.title}
+          className="min-w-0 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2"
+        >
+          <h3 className="text-base font-semibold text-slate-900 line-clamp-2">
+            {paper.title}
+          </h3>
+        </a>
         <div className="flex shrink-0 items-center gap-2">
           <BookmarkButton paperId={paper.id} />
           <span className="rounded bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700">
@@ -24,6 +27,6 @@ export default function PaperCard({ paper }: { paper: PaperListItem }) {
       <p className="mt-1 text-sm text-slate-400">
         {paper.cited_by_count.toLocaleString()} citations
       </p>
-    </a>
+    </div>
   );
 }

@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 
 import HistoryPusher from "@/components/HistoryPusher";
+import BookmarkButton from "@/components/BookmarkButton";
 import { fetchPaper, fetchSimilar } from "@/lib/api";
 
 export const revalidate = 60;
@@ -31,9 +32,12 @@ export default async function PaperDetailPage({
           <h1 className="text-2xl font-bold text-slate-900 sm:text-3xl">
             {paper.title}
           </h1>
-          <span className="shrink-0 rounded bg-indigo-50 px-2 py-1 text-sm font-medium text-indigo-700">
-            {paper.publication_year}
-          </span>
+          <div className="flex shrink-0 items-center gap-2">
+            <BookmarkButton paperId={Number(id)} />
+            <span className="shrink-0 rounded bg-indigo-50 px-2 py-1 text-sm font-medium text-indigo-700">
+              {paper.publication_year}
+            </span>
+          </div>
         </div>
 
         <p className="mt-3 text-sm text-slate-500">

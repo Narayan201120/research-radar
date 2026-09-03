@@ -60,3 +60,48 @@ export function pushHistory(id: number): void {
   filtered.unshift(id);
   writeIds(KEY_HISTORY, filtered.slice(0, HISTORY_MAX));
 }
+
+export function exportBookmarks(): number[] {
+  return readIds(KEY_BOOKMARKS);
+}
+
+export function exportBookmarksJson(): string {
+  return JSON.stringify(readIds(KEY_BOOKMARKS));
+}
+
+export function parseBookmarksJson(text: string): number[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text) as unknown;
+  } catch {
+    throw new Error("Invalid bookmarks JSON: malformed JSON");
+  }
+  if (!Array.isArray(parsed)) {
+    throw new Error("Invalid bookmarks JSON: expected array");
+  }
+  return parsed.filter((v): v is number => typeof v === "number");
+}
+
+export function importBookmarks(
+  data: unknown,
+  opts?: { replace?: boolean }
+): { imported: number; total: number } {
+  const current = readIds(KEY_BOOKMARKS);
+  if (!Array.isArray(data)) {
+    return { imported: 0, total: current.length };
+  }
+  const valid = [...new Set(data.filter((v): v is number => typeof v === "number"))];
+  if (opts?.replace === true) {
+    writeIds(KEY_BOOKMARKS, valid);
+    return { imported: valid.length, total: valid.length };
+  }
+  const existing = new Set(current);
+  const fresh = valid.filter((id) => !existing.has(id));
+  const next = [...current, ...fresh];
+  writeIds(KEY_BOOKMARKS, next);
+  return { imported: fresh.length, total: next.length };
+}
+
+export function clearHistory(): void {
+  writeIds(KEY_HISTORY, []);
+}

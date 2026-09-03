@@ -272,6 +272,74 @@ def test_hybrid_degrades_to_legacy_on_non_postgres(client, session):
     assert {item["id"] for item in hybrid["items"]} >= {data["attention"].id}
 
 
+def test_ids_filter_alone(client, session):
+    data = _seed(client, session)
+    a = data["attention"].id
+    y = data["yolo"].id
+    body = client.get(f"/papers?ids={a},{y}").json()
+    assert body["total"] == 2
+    assert {p["id"] for p in body["items"]} == {a, y}
+    # legacy ordering is year DESC: attention (2025) before yolo (2024)
+    assert body["items"][0]["id"] == a
+
+
+def test_ids_filter_with_q(client, session):
+    data = _seed(client, session)
+    a = data["attention"].id
+    y = data["yolo"].id
+    body = client.get(f"/papers?ids={a},{y}&q=attention").json()
+    assert body["total"] == 1
+    assert body["items"][0]["id"] == a
+    # intersect-then-rank: yolo does not match q, so empty
+    empty = client.get(f"/papers?ids={y}&q=attention").json()
+    assert empty["total"] == 0
+    assert empty["items"] == []
+
+
+def test_ids_filter_invalid_ignored(client, session):
+    data = _seed(client, session)
+    a = data["attention"].id
+    y = data["yolo"].id
+    body = client.get(f"/papers?ids={a},abc,,,{y},!!!").json()
+    assert body["total"] == 2
+    assert {p["id"] for p in body["items"]} == {a, y}
+    # duplicates deduped, whitespace stripped
+    dup = client.get("/papers", params={"ids": f"{a}, {a},{y} "}).json()
+    assert dup["total"] == 2
+    assert {p["id"] for p in dup["items"]} == {a, y}
+
+
+def test_ids_filter_all_unknown_empty(client, session):
+    data = _seed(client, session)
+    # valid ints but no matching rows
+    body = client.get("/papers?ids=99991,99992").json()
+    assert body["total"] == 0
+    assert body["items"] == []
+    # all invalid -> empty after parse
+    invalid = client.get("/papers?ids=abc,!!!").json()
+    assert invalid["total"] == 0
+    assert invalid["items"] == []
+    assert invalid["page"] == 1
+    # 422 behavior unchanged even with ids
+    a = data["attention"].id
+    assert client.get(f"/papers?ids={a}&ranked=true").status_code == 422
+    assert client.get(f"/papers?ids={a}&hybrid=true").status_code == 422
+    assert client.get(f"/papers?q=attention&ranked=true&hybrid=true&ids={a}").status_code == 422
+
+
+def test_ids_filter_pagination(client, session):
+    data = _seed(client, session)
+    all_ids = [data["attention"].id, data["llama"].id, data["yolo"].id, data["cnn"].id]
+    ids_qs = ",".join(str(i) for i in all_ids)
+    p1 = client.get(f"/papers?ids={ids_qs}&page=1&page_size=2").json()
+    p2 = client.get(f"/papers?ids={ids_qs}&page=2&page_size=2").json()
+    p3 = client.get(f"/papers?ids={ids_qs}&page=3&page_size=2").json()
+    assert p1["total"] == 4 and p2["total"] == 4
+    assert len(p1["items"]) == 2 and len(p2["items"]) == 2
+    assert p3["items"] == []
+    assert {i["id"] for i in p1["items"]}.isdisjoint({i["id"] for i in p2["items"]})
+
+
 def test_health_ok(client):
     response = client.get("/health")
     assert response.status_code == 200

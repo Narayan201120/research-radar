@@ -8,6 +8,7 @@ interface HomeSearchParams {
   page?: string;
   ranked?: string;
   hybrid?: string;
+  saved?: string;
 }
 
 export default async function HomePage({
@@ -26,6 +27,7 @@ export default async function HomePage({
         initialPage={Math.max(1, Number(params.page) || 1)}
         initialRanked={params.ranked === "true"}
         initialHybrid={params.hybrid === "true"}
+        initialSaved={params.saved === "true"}
       />
     </main>
   );

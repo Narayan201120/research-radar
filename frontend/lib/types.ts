@@ -47,6 +47,7 @@ export interface PaperQuery {
   year?: string;
   topic?: string;
   author?: string;
+  ids?: string;
   page?: number;
   page_size?: number;
   ranked?: boolean;
