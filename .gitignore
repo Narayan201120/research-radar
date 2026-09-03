@@ -18,6 +18,7 @@ npm-debug.log*
 
 # Raw data dumps (never commit)
 *.jsonl
+!backend/tests/fixtures/qrels.jsonl
 *.csv
 data/
 *.json.gz

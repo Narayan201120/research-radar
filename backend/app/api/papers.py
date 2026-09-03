@@ -98,6 +98,9 @@ _MATCH_CLAUSE = "(p.id @@@ paradedb.match('title', :q) OR p.id @@@ paradedb.matc
 
 _RRF_K = 60
 
+DENSE_K = 100
+SPARSE_K = 100
+
 
 def _rrf_fuse(dense_ids: list[int], sparse_ids: list[int], k: int = _RRF_K) -> list[int]:
     scores: dict[int, float] = {}
@@ -119,82 +122,105 @@ def _list_papers_hybrid(
     page_size: int,
     ids: list[int] | None = None,
 ) -> PaperListResponse:
-    """Hybrid RRF: dense 10 (pgvector HNSW) + sparse 10 (BM25) → RRF → filters after."""
-    # dense 10
+    """Hybrid RRF dense 100 + sparse 100 → RRF K=60, filters-before.
+
+    Total is the fusion-window size (``len(fused)``, ≤200): the union of the
+    over-fetch windows that were actually fused and paginated. Vector search
+    has no natural full count (every paper has a distance), so unlike ranked
+    this total is window-bound by design — but 10x wider than the old ≤20.
+    """
+    if ids is not None and len(ids) == 0:
+        return PaperListResponse(items=[], total=0, page=page, page_size=page_size)
+
+    # Shared filters-before fragment + params (same semantics as ranked).
+    filters = ""
+    base_params: dict[str, object] = {}
+    if year is not None:
+        filters += " AND p.publication_year = :year"
+        base_params["year"] = year
+    if topic:
+        filters += (
+            " AND EXISTS (SELECT 1 FROM paper_topic pt JOIN topic t ON t.id = pt.topic_id"
+            " WHERE pt.paper_id = p.id AND t.slug = :topic)"
+        )
+        base_params["topic"] = topic
+    if author:
+        filters += (
+            " AND EXISTS (SELECT 1 FROM paper_author pa JOIN author a ON a.id = pa.author_id"
+            " WHERE pa.paper_id = p.id AND a.name ILIKE :author_wild)"
+        )
+        base_params["author_wild"] = _paper_wildcard(author)
+    if ids is not None:
+        id_list = ",".join(str(i) for i in ids)
+        if id_list:
+            filters += f" AND p.id IN ({id_list})"
+
+    # dense top-K with filters-before (degrades to sparse-only if embedding fails)
     dense_ids: list[int] = []
+    qvec_literal: str | None = None
     try:
         from app.services.embeddings import FastEmbedProvider, vector_literal
 
         provider = FastEmbedProvider()
         qvec = provider.embed_texts([q])[0]
-        literal = vector_literal(qvec)
-        rows = db.execute(
-            text("SELECT paper_id FROM paper_embedding ORDER BY embedding <=> CAST(:qvec AS vector) LIMIT 10"),
-            {"qvec": literal},
-        ).all()
-        dense_ids = [r.paper_id for r in rows]
+        qvec_literal = vector_literal(qvec)
     except Exception:
-        dense_ids = []
+        qvec_literal = None
+    if qvec_literal is not None:
+        try:
+            rows = db.execute(
+                text(
+                    "SELECT pe.paper_id FROM paper_embedding pe "
+                    "JOIN paper p ON p.id = pe.paper_id "
+                    f"WHERE 1=1{filters} "
+                    "ORDER BY pe.embedding <=> CAST(:qvec AS vector) "
+                    f"LIMIT {DENSE_K}"
+                ),
+                {**base_params, "qvec": qvec_literal},
+            ).all()
+            dense_ids = [r.paper_id for r in rows]
+        except Exception:
+            dense_ids = []
 
-    # sparse 10
+    # sparse top-K with filters-before
     sparse_ids: list[int] = []
     try:
         rows = db.execute(
             text(
                 "SELECT p.id FROM paper p "
-                f"WHERE {_MATCH_CLAUSE} "
-                "ORDER BY paradedb.score(p.id) DESC LIMIT 10"
+                f"WHERE {_MATCH_CLAUSE}{filters} "
+                "ORDER BY paradedb.score(p.id) DESC "
+                f"LIMIT {SPARSE_K}"
             ),
-            {"q": q},
+            {**base_params, "q": q},
         ).all()
         sparse_ids = [r.id for r in rows]
     except Exception:
         sparse_ids = []
 
-    fused = _rrf_fuse(dense_ids, sparse_ids)  # at most 20 → 10
+    fused = _rrf_fuse(dense_ids, sparse_ids)  # RRF K=60 ordering preserved
     if ids is not None:
         idset = set(ids)
         fused = [pid for pid in fused if pid in idset]
+    total = len(fused)
     if not fused:
         return PaperListResponse(items=[], total=0, page=page, page_size=page_size)
 
-    # hydrate in RRF order, then apply filters after (Option A)
+    # fused is already filtered (filters-before), so page-slice directly
+    start = (page - 1) * page_size
+    page_ids = fused[start : start + page_size]
+    if not page_ids:
+        return PaperListResponse(items=[], total=total, page=page, page_size=page_size)
+
+    # hydrate page in RRF order (single query)
     papers = db.scalars(
-        select(Paper).options(selectinload(Paper.authors)).where(Paper.id.in_(fused))
+        select(Paper).options(selectinload(Paper.authors)).where(Paper.id.in_(page_ids))
     ).all()
     by_id = {p.id: p for p in papers}
-    ordered = [by_id[pid] for pid in fused if pid in by_id]
+    ordered = [by_id[pid] for pid in page_ids if pid in by_id]
 
-    # filters after fusion
-    def _keep(p: Paper) -> bool:
-        if year is not None and p.publication_year != year:
-            return False
-        if topic and not any(t.slug == topic for t in p.topics):
-            # need topics loaded — for hybrid we didn't load topics, check via query
-            return False
-        if author and not any(author.lower() in a.name.lower() for a in p.authors):
-            return False
-        return True
-
-    # For topic filter we need topics; load them if needed
-    if topic:
-        # reload with topics for accurate filter
-        papers_with_topics = db.scalars(
-            select(Paper).options(selectinload(Paper.authors), selectinload(Paper.topics)).where(Paper.id.in_(fused))
-        ).all()
-        by_id_t = {p.id: p for p in papers_with_topics}
-        ordered = [by_id_t[pid] for pid in fused if pid in by_id_t]
-        filtered = [p for p in ordered if _keep(p)]
-    else:
-        filtered = [p for p in ordered if _keep(p)]
-
-    total = len(filtered)
-    start = (page - 1) * page_size
-    page_items = filtered[start : start + page_size]
-
-    # need topics for response? PaperListItem only needs authors, not topics
     return PaperListResponse(
-        items=[PaperListItem.model_validate(p) for p in page_items],
+        items=[PaperListItem.model_validate(p) for p in ordered],
         total=total,
         page=page,
         page_size=page_size,

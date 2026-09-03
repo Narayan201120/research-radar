@@ -123,7 +123,7 @@ def test_hybrid_fuses_bm25_and_vector(pg_client, pg_session):
     assert hybrid["items"] != legacy["items"]
 
 
-def test_hybrid_filters_after(pg_client, pg_session):
+def test_hybrid_filters_before(pg_client, pg_session):
     from app.services.embeddings import FastEmbedProvider
 
     data = _seed_small(pg_session)
@@ -131,7 +131,7 @@ def test_hybrid_filters_after(pg_client, pg_session):
     embed_papers_by_ids(pg_session, provider, [data["high"].id, data["low_new"].id, data["mid"].id])
     pg_session.commit()
 
-    # filters applied after RRF — year=2024 should keep only mid
+    # filters applied before fusion in SQL — year=2024 should keep only mid
     filtered = pg_client.get("/papers?q=attention&hybrid=true&year=2024").json()
     assert filtered["total"] == 1
     assert filtered["items"][0]["id"] == data["mid"].id
@@ -139,6 +139,47 @@ def test_hybrid_filters_after(pg_client, pg_session):
     # topic filter
     by_topic = pg_client.get(f"/papers?q=attention&hybrid=true&topic={data['nlp'].slug}").json()
     assert by_topic["total"] == 2
+
+
+def test_hybrid_total_full_count(pg_client, pg_session):
+    from app.services.embeddings import FastEmbedProvider
+
+    data = _seed_small(pg_session)
+    provider = FastEmbedProvider()
+    embed_papers_by_ids(pg_session, provider, [data["high"].id, data["low_new"].id, data["mid"].id])
+    pg_session.commit()
+
+    # fusion-window count on small seed: all 3 embedded => hybrid == ranked
+    hybrid = pg_client.get("/papers?q=attention&hybrid=true").json()
+    ranked = pg_client.get("/papers?q=attention&ranked=true").json()
+    assert hybrid["total"] == 3
+    assert hybrid["total"] == ranked["total"]
+
+    # filtered total uses filters-before, matches ranked filtered count
+    hybrid_year = pg_client.get("/papers?q=attention&hybrid=true&year=2024").json()
+    ranked_year = pg_client.get("/papers?q=attention&ranked=true&year=2024").json()
+    assert hybrid_year["total"] == 1
+    assert hybrid_year["total"] == ranked_year["total"]
+
+    # total is stable across pages (window count, not page length)
+    p2 = pg_client.get("/papers?q=attention&hybrid=true&page=2&page_size=1").json()
+    assert p2["total"] == 3
+
+
+def test_hybrid_deep_pagination(pg_client, pg_session):
+    from app.services.embeddings import FastEmbedProvider
+
+    data = _seed_small(pg_session)
+    provider = FastEmbedProvider()
+    embed_papers_by_ids(pg_session, provider, [data["high"].id, data["low_new"].id, data["mid"].id])
+    pg_session.commit()
+
+    p1 = pg_client.get("/papers?q=attention&hybrid=true&page=1&page_size=1").json()
+    p2 = pg_client.get("/papers?q=attention&hybrid=true&page=2&page_size=1").json()
+    p3 = pg_client.get("/papers?q=attention&hybrid=true&page=3&page_size=1").json()
+    assert len(p1["items"]) == 1 and len(p2["items"]) == 1 and len(p3["items"]) == 1
+    assert len({p1["items"][0]["id"], p2["items"][0]["id"], p3["items"][0]["id"]}) == 3
+    assert p1["total"] == 3 and p2["total"] == 3 and p3["total"] == 3
 
 
 def test_similar_ann_uses_vectors_when_present(pg_client, pg_session):

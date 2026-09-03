@@ -61,7 +61,7 @@ next tick without taking anything down.
 
 ### Search
 
-- **Hybrid mode** (`GET /papers?hybrid=true&q=...`): RRF `K=60` fusion of vector `top 10` (HNSW `embedding <=> query`) + BM25 `top 10` (`paradedb.score`), fused to `10` (port of `rag_web_app` `retriever.py:135`), filters `year/topic/author` applied **after** fusion (Option A), `page` paginates fused list. Requires `q` (`422` otherwise), `hybrid` and `ranked` mutually exclusive (`422`). `hybrid total` is fused size (≤20), not full match count — `ranked`/`ILIKE` totals are full counts. Live `q=attention` → `hybrid 14` vs `ranked 68` vs `ILIKE 69` (top-K vs full).
+- **Hybrid mode** (`GET /papers?hybrid=true&q=...`): RRF `K=60` fusion of vector `top 100` (HNSW `embedding <=> query`) + BM25 `top 100` (`paradedb.score`), filters `year/topic/author/ids` applied **before** fusion in SQL, `total` is fusion-window size (`len(fused)`, ≤200 — vector search has no natural full count, so this stays window-bound by design, 10x wider than the old ≤20). Requires `q` (`422` otherwise), `hybrid` and `ranked` mutually exclusive (`422`). Eval harness `scripts/eval_search.py` with `tests/fixtures/qrels.jsonl` (8 queries, substring relevance) compares `legacy vs ranked vs hybrid` (`MRR`, `NDCG@10`, `recall@20`, info-only).
 - **Ranked mode** (`GET /papers?ranked=true&q=...`): BM25 via `paper_search_idx`
   (`USING paradedb (id, title, abstract) WITH (key_field='id')`, `paradedb.score`
   ordering, `score DESC, publication_year DESC, id DESC`). Year/topic/author filters
@@ -136,21 +136,22 @@ Top-5 similar papers, self-excluded by construction, scores rounded to 4 decimal
 ## Tests
 
 ```bash
-docker compose exec backend python -m pytest        # all tests (86: 79 hermetic + 7 gate live — hybrid adds 2, HTML adds 5)
-python -m pytest -q                                 # hermetic from backend/ with local venv (79, 7 skipped without Docker)
-python -m pytest -m postgres -q                     # Postgres gate only (7 tests, requires ParadeDB — BM25/ANN/hybrid)
+docker compose exec backend python -m pytest        # all tests (93: 84 hermetic + 9 gate live — hybrid adds 2, HTML adds 5, ids adds 5, full-count adds 2)
+python -m pytest -q                                 # hermetic from backend/ with local venv (84, 9 skipped without Docker)
+python -m pytest -m postgres -q                     # Postgres gate only (9 tests, requires ParadeDB — BM25/ANN/hybrid)
+python scripts/eval_search.py                       # search scorecard vs live backend (legacy vs ranked vs hybrid, info-only)
 ```
 
-86 tests: 79 hermetic per-test in-memory SQLite schema (no network) + 7
+93 tests: 84 hermetic per-test in-memory SQLite schema (no network) + 9
 Postgres/ParadeDB integration — API endpoints (search/filters/pagination/404s/LIKE
-escaping, `?ranked`/`?hybrid` validation `422` and dialect-guard degradation, `hybrid` RRF `K=60` filters-after), `similar` returns
+escaping, `?ranked`/`?hybrid`/`?ids` validation `422` and dialect-guard degradation, `hybrid` RRF `K=60` filters-before with fusion-window total), `similar` returns
 `[]` on SQLite (no vector/HNSW), ingest idempotency (fake client fetched twice →
 0 new rows), the real OpenAlex client (httpx `MockTransport`), abstract
 reconstruction (including `abstract_recovery` Crossref→arXiv→HTML waterfall, `publisher_extract` meta/section), DOI
 verifier (private-IP block), and live BM25 relevance + ANN similarity + hybrid fusion (`tests/test_postgres.py`,
 `HashingFakeProvider`/`FastEmbedProvider`, TRUNCATE per test). Hermetic stays green without Docker
-(7 skipped); CI `services: postgres` (`paradedb/paradedb:0.25.3-pg16`) runs both
-steps for 86 passed.
+(9 skipped); CI `services: postgres` (`paradedb/paradedb:0.25.3-pg16`) runs both
+steps for 93 passed. Search eval `tests/fixtures/qrels.jsonl` (8 queries, substring relevance) is info-only, not a gate.
 
 Abstract backfill: `docker compose exec backend python -m scripts.backfill_abstracts --dry-run` (57 recoverable, `1/57` via `arxiv`, remainder via HTML) → `python -m scripts.backfill_abstracts` (polite 0.5s, re-embeds).
 

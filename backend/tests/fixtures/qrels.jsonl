@@ -1,0 +1,8 @@
+{"author": null, "q": "attention", "qid": "q01", "relevant_substrings": ["attention"], "year": null}
+{"author": null, "q": "transformer", "qid": "q02", "relevant_substrings": ["transformer"], "year": null}
+{"author": null, "q": "object detection", "qid": "q03", "relevant_substrings": ["detection", "yolo"], "year": null}
+{"author": null, "q": "large language models", "qid": "q04", "relevant_substrings": ["language model", "llama", "survey"], "year": null}
+{"author": null, "q": "convolutional image classification", "qid": "q05", "relevant_substrings": ["convolutional", "image classification"], "year": null}
+{"author": null, "q": "sequence transduction", "qid": "q06", "relevant_substrings": ["sequence", "transduction"], "year": null}
+{"author": null, "q": "attention", "qid": "q07", "relevant_substrings": ["attention"], "year": 2025}
+{"author": "Lovelace", "q": "attention", "qid": "q08", "relevant_substrings": ["attention"], "year": null}
