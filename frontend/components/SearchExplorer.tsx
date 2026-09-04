@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 
 import PaperCard from "@/components/PaperCard";
@@ -98,7 +98,14 @@ export default function SearchExplorer({
     [pathname, router]
   );
 
-  const compact = { q: debouncedQ, year, topic, author, page, ranked, hybrid, showSaved };
+  // Memoized: a fresh object literal every render would re-fire the
+  // syncUrl effect after EVERY render, and each router.replace schedules
+  // another render — an infinite replace loop (~70/sec idle) that flashes
+  // the tab loading state. Primitives keep the identity stable.
+  const compact = useMemo(
+    () => ({ q: debouncedQ, year, topic, author, page, ranked, hybrid, showSaved }),
+    [debouncedQ, year, topic, author, page, ranked, hybrid, showSaved]
+  );
 
   useEffect(() => {
     const refresh = () => {
