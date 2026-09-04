@@ -38,13 +38,26 @@
 - No CSS specificity collisions possible: base layer holds only
   `body`, `::selection`, `:focus-visible`, `.tnum`, `.skeleton`.
 
+## Screenshots (captured, `design/screenshots/`)
+
+- `home-1440.png`, `home-375.png`, `detail-1440.png`,
+  `detail-375.png` — headless Chrome against live `localhost`.
+- True-375 renders were verified via puppeteer viewport plus
+  DOM measurement (`scrollWidth == innerWidth == 375`, 20 star
+  buttons present). The 375 collapse matches `brief.md` §5:
+  rank + title + star on line 1, meta with flattened year on
+  line 2, no horizontal scroll.
+- Tooling note: Chrome CLI `--window-size=375` screenshots
+  showed false overflow (old/new headless enforce a wider
+  minimum window, then crop). Trust puppeteer viewports, not
+  CLI flags, for narrow widths.
+
 ## Open items for a future pass
 
-- Screenshots at 375/768/1440 were not captured — no browser
-  tooling in this environment. Recommended before demo:
-  home (default, loading, empty-saved, empty-filtered, error,
-  history-visible), detail (normal, null-abstract,
-  similar-failed), 404.
+- Remaining states not yet shot: loading, empty-saved,
+  empty-filtered, error, history-visible, null-abstract,
+  similar-failed, 404. Same puppeteer setup works.
+- 768px breakpoint not yet shot.
 - Contrast check on `sage #5F6E64` at 12px should be metered;
   it is secondary-only by construction, but verify.
 - `Clear filters`, `Export`, pagination numbers have hover
