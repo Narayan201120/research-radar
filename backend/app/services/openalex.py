@@ -4,6 +4,8 @@ import time
 
 import httpx
 
+from app.services.http_retry import compute_sleep, is_retryable_status, parse_retry_after
+
 PER_PAGE = 100
 REQUEST_DELAY_SECONDS = 0.5
 MAX_RETRIES = 3
@@ -46,13 +48,31 @@ class OpenAlexClient:
         for attempt in range(MAX_RETRIES):
             try:
                 response = self._client.get(path, params=params)
-                if response.status_code in (429, 500, 502, 503, 504):
-                    raise OpenAlexError(f"OpenAlex returned {response.status_code}")
-                response.raise_for_status()
-                return response.json()
-            except Exception as exc:  # retryable: network + 429/5xx
+            except (httpx.TimeoutException, httpx.ConnectError) as exc:
+                # Retryable network errors only.
                 last_error = exc
-                time.sleep(2**attempt)
+                if attempt == MAX_RETRIES - 1:
+                    break
+                time.sleep(compute_sleep(attempt, None))
+                continue
+            except httpx.HTTPError as exc:
+                # Non-retryable transport error — fail fast, no sleep.
+                raise OpenAlexError(f"OpenAlex request failed: {exc}") from exc
+            # Retryable statuses: shared RETRYABLE (429/502/503/504) + 500
+            # (500 kept for legacy compat; existing 500x3 test expects retry).
+            if is_retryable_status(response.status_code) or response.status_code == 500:
+                retry_after = parse_retry_after(response.headers)
+                last_error = OpenAlexError(f"OpenAlex returned {response.status_code}")
+                if attempt == MAX_RETRIES - 1:
+                    break
+                time.sleep(compute_sleep(attempt, retry_after))
+                continue
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                # 400/401/403/404/422 etc — fail fast, no sleep/retry.
+                raise OpenAlexError(f"OpenAlex request failed: {exc}") from exc
+            return response.json()
         raise OpenAlexError(f"OpenAlex request failed after {MAX_RETRIES} attempts: {last_error}")
 
     def _paginate(self, base_params: dict, max_papers: int) -> list[dict]:

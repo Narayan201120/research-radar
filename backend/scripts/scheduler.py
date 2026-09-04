@@ -14,6 +14,7 @@ sidecar. SIGINT/SIGTERM end the loop cleanly.
 from __future__ import annotations
 
 import logging
+import random
 import signal
 import sys
 import threading
@@ -31,6 +32,7 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(messag
 logger = logging.getLogger("scheduler")
 
 MIN_INTERVAL_SECONDS = 60.0
+MAX_JITTER_SECONDS = 30.0
 
 _stop = threading.Event()
 
@@ -56,7 +58,14 @@ def run_once(
             embedding_provider=embedding_provider,
         )
     except Exception as exc:
-        logger.error("incremental run failed: %s", exc)
+        if isinstance(exc, RuntimeError) and "watermark" in str(exc).lower():
+            logger.error(
+                "incremental run failed: missing watermark configuration "
+                "(will retry, run full ingest to seed): %s",
+                exc,
+            )
+        else:
+            logger.error("incremental run failed: %s", exc)
         return None
     logger.info(
         "incremental ok: %s changed (%s new, %s updated), papers in db=%s",
@@ -72,6 +81,9 @@ def main() -> int:
     settings = get_settings()
     interval_seconds = max(MIN_INTERVAL_SECONDS, settings.ingest_interval_hours * 3600.0)
     retry_seconds = max(MIN_INTERVAL_SECONDS, settings.scheduler_retry_minutes * 60.0)
+    backoff_max_seconds = max(
+        MIN_INTERVAL_SECONDS, settings.scheduler_backoff_max_minutes * 60.0
+    )
     topics = _topics(settings)
     embedding_provider = (
         FastEmbedProvider(settings.embedding_model_name)
@@ -86,6 +98,7 @@ def main() -> int:
         retry_seconds / 60.0,
     )
 
+    consecutive_failures = 0
     while not _stop.is_set():
         client = OpenAlexClient(settings.openalex_mailto)
         success = False
@@ -95,12 +108,26 @@ def main() -> int:
                 success = report is not None
         finally:
             client.close()
-        sleep_seconds = interval_seconds if success else retry_seconds
-        logger.info(
-            "sleeping %.1f minutes until next %s",
-            sleep_seconds / 60.0,
-            "run" if success else "retry",
-        )
+        if success:
+            consecutive_failures = 0
+            sleep_seconds = interval_seconds
+            logger.info(
+                "sleeping %.1f minutes until next run",
+                sleep_seconds / 60.0,
+            )
+        else:
+            consecutive_failures += 1
+            capped_exp = min(consecutive_failures, 5)
+            backoff_seconds = min(
+                retry_seconds * (2**capped_exp), backoff_max_seconds
+            )
+            jitter_seconds = random.uniform(0, MAX_JITTER_SECONDS)
+            sleep_seconds = backoff_seconds + jitter_seconds
+            logger.info(
+                "sleeping %.1f minutes until next retry (failure %d)",
+                sleep_seconds / 60.0,
+                consecutive_failures,
+            )
         if _stop.wait(timeout=sleep_seconds):
             break
 

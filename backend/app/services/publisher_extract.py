@@ -11,21 +11,34 @@ import time
 
 import httpx
 
+from app.services.http_retry import compute_sleep, is_retryable_status, parse_retry_after
+
 HTML_TIMEOUT = 12.0
 USER_AGENT = "research-radar-abstract-recovery/0.1 (mailto:research-radar@example.com)"
 
 
 def _get_with_backoff(client: httpx.Client, url: str, *, timeout: float) -> httpx.Response | None:
+    """Thin compat wrapper over shared http_retry helper.
+
+    Retries 429 + 5xx (500/502/503/504) with Retry-After + jitter and
+    httpx Timeout/Connect errors. Returns None on exhaustion.
+    """
     for attempt in range(3):
         try:
             resp = client.get(url, timeout=timeout)
-            if resp.status_code == 429:
-                time.sleep(1.5 ** attempt)
-                continue
-            return resp
-        except httpx.HTTPError:
-            time.sleep(0.5)
+        except (httpx.TimeoutException, httpx.ConnectError):
+            if attempt == 2:
+                return None
+            time.sleep(compute_sleep(attempt, None))
             continue
+        except httpx.HTTPError:
+            return None
+        if is_retryable_status(resp.status_code) or resp.status_code == 500:
+            if attempt == 2:
+                return None
+            time.sleep(compute_sleep(attempt, parse_retry_after(resp.headers)))
+            continue
+        return resp
     return None
 
 _WS_RE = re.compile(r"\s+")

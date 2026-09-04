@@ -8,7 +8,7 @@ import httpx
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import Author, IngestState, Paper, PaperAuthor, PaperTopic, Topic
+from app.models import Author, IngestDlq, IngestState, Paper, PaperAuthor, PaperTopic, Topic
 from app.services.doi_checker import verify_works
 from app.services.embeddings import EmbeddingProvider, embed_papers_by_ids
 from app.services.openalex import OpenAlexClient, reconstruct_abstract
@@ -104,13 +104,41 @@ def _upsert_author(session: Session, openalex_id: str, name: str) -> Author | No
     return author
 
 
-def _normalize_fetched(fetched: dict[str, list[dict]]) -> dict[str, dict]:
-    """Normalize works and dedupe across topics by openalex_id."""
+def _normalize_fetched(
+    fetched: dict[str, list[dict]],
+    session: Session | None = None,
+    run_type: str = "full",
+) -> dict[str, dict]:
+    """Normalize works and dedupe across topics by openalex_id.
+
+    Works that fail normalization are recorded as ``normalize_skip`` DLQ rows
+    (same session, flushed on commit). No ``IngestReport`` field is added for
+    these to avoid an API break — rows plus a debug log are the signal.
+
+    Run-level flush/commit errors are NOT captured here; they bubble to the
+    scheduler/CLI which log them.
+    """
     normalized: dict[str, dict] = {}
     for slug, batch in fetched.items():
         for work in batch:
             paper = _normalize_work(work)
             if paper is None:
+                raw_id = (work.get("id") or "")
+                openalex_id = raw_id.rsplit("/", 1)[-1] or None
+                if session is not None:
+                    session.add(
+                        IngestDlq(
+                            run_type=run_type,
+                            topic_slug=slug,
+                            openalex_id=openalex_id,
+                            doi=work.get("doi"),
+                            title=work.get("display_name"),
+                            reason="normalize_skip",
+                            error_detail="missing title" if not (work.get("display_name") or "").strip() else "missing openalex_id",
+                            payload_json=work,
+                        )
+                    )
+                logger.debug("normalize skip for work %s (topic %s)", raw_id or "?", slug)
                 continue
             stored = normalized.setdefault(paper["openalex_id"], paper)
             stored.setdefault("_topics", set()).add(slug)
@@ -121,9 +149,17 @@ def _drop_unresolvable_dois(
     fetched: dict[str, list[dict]],
     report: IngestReport,
     transport: httpx.BaseTransport | None,
+    session: Session | None = None,
+    run_type: str = "full",
 ) -> None:
-    """Verify DOIs in place; works with dead DOIs and no mirror are removed."""
+    """Verify DOIs in place; works with dead DOIs and no mirror are removed.
+
+    Each dropped work is recorded as an ``unresolvable_doi`` DLQ row in the
+    same session (survives via the run's commit). Counters and warning log
+    are unchanged.
+    """
     all_works = [w for batch in fetched.values() for w in batch]
+    work_slug = {id(w): slug for slug, batch in fetched.items() for w in batch}
     report.dois_checked = sum(1 for w in all_works if (w.get("doi") or "").strip())
     kept, dropped, replaced = verify_works(all_works, transport=transport)
     report.dois_replaced = replaced
@@ -134,6 +170,20 @@ def _drop_unresolvable_dois(
             len(dropped),
             ", ".join(str(w.get("id")) for w in dropped),
         )
+        if session is not None:
+            for work in dropped:
+                raw_id = str(work.get("id") or "")
+                session.add(
+                    IngestDlq(
+                        run_type=run_type,
+                        topic_slug=work_slug.get(id(work)),
+                        openalex_id=raw_id.rsplit("/", 1)[-1] or None,
+                        doi=work.get("doi"),
+                        title=work.get("display_name"),
+                        reason="unresolvable_doi",
+                        payload_json=work,
+                    )
+                )
     by_id = {w.get("id"): w for w in kept}
     for slug, batch in fetched.items():
         fetched[slug] = [w for w in batch if w.get("id") in by_id]
@@ -259,9 +309,9 @@ def run_ingest(
     report.fell_back_to = None if not fell_back else "date ladder"
 
     if verify_dois:
-        _drop_unresolvable_dois(fetched, report, transport=doi_transport)
+        _drop_unresolvable_dois(fetched, report, transport=doi_transport, session=session, run_type="full")
 
-    normalized = _normalize_fetched(fetched)
+    normalized = _normalize_fetched(fetched, session=session, run_type="full")
 
     total = len(normalized)
     if total < MIN_TOTAL_PAPERS:
@@ -329,9 +379,11 @@ def run_incremental_ingest(
         logger.info("incremental %s: %s changed works since %s", slug, len(batch), since)
 
     if verify_dois and any(fetched.values()):
-        _drop_unresolvable_dois(fetched, report, transport=doi_transport)
+        _drop_unresolvable_dois(
+            fetched, report, transport=doi_transport, session=session, run_type="incremental"
+        )
 
-    normalized = _normalize_fetched(fetched)
+    normalized = _normalize_fetched(fetched, session=session, run_type="incremental")
     report.papers = len(normalized)
 
     if normalized:

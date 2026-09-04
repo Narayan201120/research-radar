@@ -13,7 +13,8 @@ with **BM25 ranked search**, **RRF hybrid**, **Find Similar Papers** powered by 
 | Database   | PostgreSQL 16 via `paradedb/paradedb:0.25.3-pg16` (pgvector + pg_search BM25, single image) |
 | Search     | ParadeDB BM25 (`paper_search_idx` on `title`+`abstract`, `paradedb.score` ranking) with ILIKE fallback; `?ranked=true` BM25, `?hybrid=true` RRF `K=60` (vector 10 + BM25 10 → 10, filters after, `422` if both) |
 | Similarity | Semantic `paper_embedding` (384-d `all-MiniLM-L6-v2` via fastembed ONNX, HNSW `vector_cosine_ops`, ANN at read time, `O(Δ)` write + `O(log N)` read) — `paper_similarity` snapshot removed in `a1b2c3d4e5f6` |
-| Tests      | pytest (86 tests: 79 SQLite hermetic + 7 Postgres integration — `pytest -m postgres` for BM25/ANN/hybrid) |
+| Tests      | pytest (99 tests: 90 SQLite hermetic + 9 Postgres integration — `pytest -m postgres` for BM25/ANN/hybrid) |
+| Ops        | `ingest_dlq` table + `retry_dlq` replay, shared HTTP retry (`Retry-After` + jitter), scheduler backoff, zero-dep `GET /metrics` |
 | Infra      | Docker Compose (postgres + backend + frontend + scheduler sidecar) |
 
 ## Quick start
@@ -40,8 +41,11 @@ A separate **scheduler sidecar** keeps the corpus current: it fetches only
 papers changed since each topic's watermark (`ingest_state` table) immediately
 at startup — catching up any churn while the stack was down — and then every
 `INGEST_INTERVAL_HOURS` (default 24). New papers are added, existing ones are
-refreshed in place, nothing duplicates, and a failed cycle is retried on the
-next tick without taking anything down.
+ refreshed in place, nothing duplicates, and a failed cycle is retried with
+ exponential backoff plus jitter (`SCHEDULER_RETRY_MINUTES` base 5, doubling to
+ `SCHEDULER_BACKOFF_MAX_MINUTES` cap 60) without taking anything down. Drops
+ land in the `ingest_dlq` table (`c8d9e0f1a2b3`) for replay via
+ `python -m scripts.retry_dlq` instead of vanishing into logs.
 
 ## Data & ingestion
 
@@ -136,24 +140,26 @@ Top-5 similar papers, self-excluded by construction, scores rounded to 4 decimal
 ## Tests
 
 ```bash
-docker compose exec backend python -m pytest        # all tests (93: 84 hermetic + 9 gate live — hybrid adds 2, HTML adds 5, ids adds 5, full-count adds 2)
-python -m pytest -q                                 # hermetic from backend/ with local venv (84, 9 skipped without Docker)
+docker compose exec backend python -m pytest        # all tests (99: 90 hermetic + 9 gate live)
+python -m pytest -q                                 # hermetic from backend/ with local venv (90, 9 skipped without Docker)
 python -m pytest -m postgres -q                     # Postgres gate only (9 tests, requires ParadeDB — BM25/ANN/hybrid)
 python scripts/eval_search.py                       # search scorecard vs live backend (legacy vs ranked vs hybrid, info-only)
 ```
 
-93 tests: 84 hermetic per-test in-memory SQLite schema (no network) + 9
+99 tests: 90 hermetic per-test in-memory SQLite schema (no network) + 9
 Postgres/ParadeDB integration — API endpoints (search/filters/pagination/404s/LIKE
 escaping, `?ranked`/`?hybrid`/`?ids` validation `422` and dialect-guard degradation, `hybrid` RRF `K=60` filters-before with fusion-window total), `similar` returns
 `[]` on SQLite (no vector/HNSW), ingest idempotency (fake client fetched twice →
-0 new rows), the real OpenAlex client (httpx `MockTransport`), abstract
+0 new rows) plus `ingest_dlq` hooks, shared HTTP retry (`Retry-After` + jitter, fail-fast on `4xx`), the real OpenAlex client (httpx `MockTransport`), abstract
 reconstruction (including `abstract_recovery` Crossref→arXiv→HTML waterfall, `publisher_extract` meta/section), DOI
 verifier (private-IP block), and live BM25 relevance + ANN similarity + hybrid fusion (`tests/test_postgres.py`,
 `HashingFakeProvider`/`FastEmbedProvider`, TRUNCATE per test). Hermetic stays green without Docker
 (9 skipped); CI `services: postgres` (`paradedb/paradedb:0.25.3-pg16`) runs both
-steps for 93 passed. Search eval `tests/fixtures/qrels.jsonl` (8 queries, substring relevance) is info-only, not a gate.
+steps for 99 passed. Search eval `tests/fixtures/qrels.jsonl` (8 queries, substring relevance) is info-only, not a gate.
 
-Abstract backfill: `docker compose exec backend python -m scripts.backfill_abstracts --dry-run` (57 recoverable, `1/57` via `arxiv`, remainder via HTML) → `python -m scripts.backfill_abstracts` (polite 0.5s, re-embeds).
+Abstract backfill: `docker compose exec backend python -m scripts.backfill_abstracts --dry-run` (57 recoverable, `1/57` via `arxiv`, remainder via HTML) → `python -m scripts.backfill_abstracts` (polite 0.5s, re-embeds, keyset loop with no-skip).
+
+Ops: `GET /metrics` (zero-dep Prometheus text: uptime + paper count) for scrapers; DLQ replay `python -m scripts.retry_dlq --limit 20` (dry-run marking, no refetch in v1). Rate limit and auth remain deferred.
 
 ## Repository layout
 
@@ -162,9 +168,9 @@ backend/
   app/api/          # FastAPI routes (papers, health)
   app/models/       # SQLAlchemy models (paper now has abstract_source/recovered_at)
   app/schemas/      # Pydantic response models
-  app/services/     # ingest, openalex client, embeddings, abstract_recovery (Crossref→arXiv→HTML waterfall), publisher_extract
-  alembic/          # migrations (ingest_state, vector/bm25 extensions, paper_embedding + hnsw, paper_search_idx, drop paper_similarity, abstract provenance)
-  scripts/          # ingest_openalex (--boot, --incremental/--since), scheduler, backfill_embeddings, backfill_abstracts
+  app/services/     # ingest (+DLQ hooks), openalex client, embeddings, abstract_recovery (Crossref→arXiv→HTML waterfall), publisher_extract, http_retry (Retry-After + jitter)
+  alembic/          # migrations (ingest_state, vector/bm25 extensions, paper_embedding + hnsw, paper_search_idx, drop paper_similarity, abstract provenance, ingest_dlq)
+  scripts/          # ingest_openalex (--boot, --incremental/--since), scheduler (backoff), backfill_embeddings, backfill_abstracts (no-skip), retry_dlq, eval_search
   tests/            # pytest suite (conftest SQLite shim, @pytest.mark.postgres gate, abstract_recovery)
   requirements.in/txt  # pip-tools pinned
 frontend/

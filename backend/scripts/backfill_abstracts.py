@@ -53,21 +53,49 @@ def main() -> int:
             embedding_provider = FastEmbedProvider(settings.embedding_model_name)
 
         recovered_total = 0
-        remaining = min(args.limit, recoverable)
         attempted = 0
-        while remaining > 0:
-            batch = min(args.batch, remaining)
+        batches = 0
+        consecutive_zeros = 0
+        while True:
+            if attempted >= args.limit:
+                break
+            batch = min(args.batch, args.limit - attempted)
             with SessionLocal() as batch_session:
                 recovered = recover_missing_abstracts(
-                    batch_session, limit=batch, offset=attempted, embedding_provider=embedding_provider
+                    batch_session, limit=batch, offset=0, embedding_provider=embedding_provider
                 )
                 batch_session.commit()
                 recovered_total += recovered
                 attempted += batch
-                remaining -= batch
-                logger.info("batch %s recovered %s (total %s)", batch, recovered, recovered_total)
+                batches += 1
+                if recovered == 0:
+                    consecutive_zeros += 1
+                else:
+                    consecutive_zeros = 0
+                remaining_nulls = batch_session.scalar(
+                    select(func.count())
+                    .select_from(Paper)
+                    .where(Paper.abstract.is_(None), Paper.doi.is_not(None))
+                ) or 0
+                logger.info(
+                    "batch %s: recovered %s (total %s, remaining nulls %s)",
+                    batches,
+                    recovered,
+                    recovered_total,
+                    remaining_nulls,
+                )
+                if remaining_nulls == 0:
+                    break
+                if consecutive_zeros >= 2:
+                    logger.info(
+                        "stopping after %s consecutive zero-recovery batches",
+                        consecutive_zeros,
+                    )
+                    break
+                if attempted >= args.limit:
+                    break
 
-        logger.info("backfill done: recovered %s / %s attempted", recovered_total, min(args.limit, recoverable))
+        logger.info("backfill done: recovered %s / %s attempted", recovered_total, attempted)
         return 0
 
 
