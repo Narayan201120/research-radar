@@ -1,32 +1,57 @@
 import type { PaperListItem } from "@/lib/types";
 import BookmarkButton from "@/components/BookmarkButton";
 
-export default function PaperCard({ paper }: { paper: PaperListItem }) {
+interface PaperCardProps {
+  paper: PaperListItem;
+  rank?: number;
+}
+
+export default function PaperCard({ paper, rank }: PaperCardProps) {
+  const authorsFull =
+    paper.authors.map((a) => a.name).join(", ") || "Unknown authors";
+  const showRank = typeof rank === "number";
+
   return (
-    <div className="block min-w-0 rounded-lg border border-slate-200 bg-white p-4 shadow-sm transition hover:border-indigo-300 hover:shadow">
-      <div className="flex items-start justify-between gap-4">
-        <a
-          href={`/papers/${paper.id}`}
-          title={paper.title}
-          className="min-w-0 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2"
-        >
-          <h3 className="text-base font-semibold text-slate-900 line-clamp-2">
-            {paper.title}
-          </h3>
-        </a>
-        <div className="flex shrink-0 items-center gap-2">
+    <div className="border-b border-rule hover:bg-paper-deep">
+      <div className="flex min-w-0 items-start gap-3 py-4">
+        {showRank ? (
+          <span
+            aria-hidden="true"
+            className="tnum w-[2ch] shrink-0 pt-1 text-xs text-signal sm:text-sm"
+          >
+            {String(rank).padStart(2, "0")}
+          </span>
+        ) : null}
+        <div className="min-w-0 flex-1">
+          <a
+            href={`/papers/${paper.id}`}
+            title={paper.title}
+            className="block rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-signal focus-visible:ring-offset-2 focus-visible:ring-offset-paper"
+          >
+            <h3 className="line-clamp-2 text-base font-medium leading-snug text-ink">
+              {paper.title}
+            </h3>
+          </a>
+          <p
+            title={authorsFull}
+            className="mt-1 truncate text-xs text-sage"
+          >
+            <span>{authorsFull}</span>
+            <span aria-hidden="true"> · </span>
+            <span className="tnum">{paper.publication_year}</span>
+            <span aria-hidden="true"> · </span>
+            <span className="tnum">
+              {paper.cited_by_count.toLocaleString()} citations
+            </span>
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
           <BookmarkButton paperId={paper.id} />
-          <span className="rounded bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700">
+          <span className="tnum hidden shrink-0 whitespace-nowrap rounded-full border border-rule px-2 py-0.5 text-xs text-sage min-[480px]:inline-flex">
             {paper.publication_year}
           </span>
         </div>
       </div>
-      <p className="mt-2 truncate text-sm text-slate-500">
-        {paper.authors.map((a) => a.name).join(", ") || "Unknown authors"}
-      </p>
-      <p className="mt-1 text-sm text-slate-400">
-        {paper.cited_by_count.toLocaleString()} citations
-      </p>
     </div>
   );
 }

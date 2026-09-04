@@ -18,7 +18,7 @@ export default async function HomePage({
 }) {
   const params = await searchParams;
   return (
-    <main className="min-h-screen bg-slate-50">
+    <main className="min-h-screen bg-paper text-ink">
       <SearchExplorer
         initialQ={params.q ?? ""}
         initialYear={params.year ?? ""}

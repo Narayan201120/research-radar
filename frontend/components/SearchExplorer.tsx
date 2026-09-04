@@ -235,35 +235,31 @@ export default function SearchExplorer({
       ? "Searching…"
       : "";
 
-  const emptyLabel = showSaved
-    ? hasFilters
-      ? `No saved papers match ${debouncedQ || "these filters"}. Clear q to see all ${bookmarkedIds.size} saved.`
-      : bookmarkedIds.size === 0
-        ? "No saved papers yet — save some with ☆ Save."
-        : "No saved papers."
-    : "No papers match your filters.";
-
   const showHistory =
     historyIds.length > 0 && !q && !year && !topic && !author && !ranked && !hybrid && !showSaved;
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-8">
-      <div className="flex items-center gap-3">
-        <img
-          src="/logo-mark.svg"
-          alt="Research Radar mark"
-          width={130}
-          height={130}
-          className="h-14 w-auto"
-        />
-        <h1 className="text-3xl font-bold tracking-tight">
-          <span className="text-slate-900">Research</span>{" "}
-          <span className="text-indigo-600">Radar</span>
-        </h1>
-      </div>
-      <p className="mt-1 text-slate-500">
-        Search recent papers in computer vision and large language models.
-      </p>
+    <div className="mx-auto max-w-5xl px-4 py-8 text-left">
+      <header>
+        <div className="flex items-center gap-3">
+          <img
+            src="/logo-mark.svg"
+            alt="Research Radar mark"
+            width={32}
+            height={32}
+            className="h-8 w-8"
+          />
+          <h1 className="font-display text-[34px] leading-none text-ink">
+            Research Radar
+          </h1>
+        </div>
+        <p className="mt-2 text-sm leading-[1.55] text-sage">
+          Search recent papers in computer vision and large language models.
+        </p>
+        <div aria-hidden="true" className="relative mt-4 border-t border-rule">
+          <span className="absolute left-0 top-[-1px] block h-px w-24 bg-signal" />
+        </div>
+      </header>
 
       <div className="mt-6 grid gap-4">
         <input
@@ -274,19 +270,19 @@ export default function SearchExplorer({
             setPage(1);
           }}
           placeholder="Search title or abstract… (e.g. attention, large language)"
-          className="w-full rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-slate-900 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+          className="w-full rounded-md border border-rule bg-paper px-3 py-2 text-sm leading-[1.55] text-ink placeholder:text-sage"
           aria-label="Search papers"
         />
         <div className="flex flex-wrap items-center gap-3 text-sm">
-          <label className="flex items-center gap-2">
-            <span className="text-slate-500">Year:</span>
+          <label className="flex items-center gap-2 text-sm text-sage">
+            <span>Year:</span>
             <select
               value={year}
               onChange={(e) => {
                 setYear(e.target.value);
                 setPage(1);
               }}
-              className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-slate-700"
+              className="tnum rounded-md border border-rule bg-paper px-2 py-1.5 text-sm leading-[1.55] text-ink"
             >
               <option value="">Any</option>
               {YEARS.map((y) => (
@@ -302,7 +298,7 @@ export default function SearchExplorer({
               setTopic(e.target.value);
               setPage(1);
             }}
-            className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-slate-700"
+            className="rounded-md border border-rule bg-paper px-2 py-1.5 text-sm leading-[1.55] text-ink"
             aria-label="Filter by topic"
           >
             <option value="">All topics</option>
@@ -320,10 +316,10 @@ export default function SearchExplorer({
               setPage(1);
             }}
             placeholder="Author name…"
-            className="w-44 rounded-md border border-slate-300 bg-white px-2 py-1.5 text-slate-700 placeholder:text-slate-400"
+            className="w-44 rounded-md border border-rule bg-paper px-2 py-1.5 text-sm leading-[1.55] text-ink placeholder:text-sage"
             aria-label="Filter by author"
           />
-          <label className="flex items-center gap-2">
+          <label className="flex cursor-pointer items-center gap-2 text-sm leading-[1.55] text-ink">
             <input
               type="checkbox"
               checked={ranked}
@@ -333,11 +329,11 @@ export default function SearchExplorer({
                 if (v) setHybrid(false);
                 setPage(1);
               }}
-              className="rounded border-slate-300"
+              className="h-4 w-4 accent-signal"
             />
-            <span className="text-slate-600">Ranked (BM25)</span>
+            <span>Ranked (BM25)</span>
           </label>
-          <label className="flex items-center gap-2">
+          <label className="flex cursor-pointer items-center gap-2 text-sm leading-[1.55] text-ink">
             <input
               type="checkbox"
               checked={hybrid}
@@ -347,11 +343,11 @@ export default function SearchExplorer({
                 if (v) setRanked(false);
                 setPage(1);
               }}
-              className="rounded border-slate-300"
+              className="h-4 w-4 accent-signal"
             />
-            <span className="text-slate-600">Hybrid (RRF)</span>
+            <span>Hybrid (RRF)</span>
           </label>
-          <label className="flex items-center gap-2">
+          <label className="inline-flex cursor-pointer items-center">
             <input
               type="checkbox"
               checked={showSaved}
@@ -359,17 +355,31 @@ export default function SearchExplorer({
                 setShowSaved(e.target.checked);
                 setPage(1);
               }}
-              className="rounded border-slate-300"
+              className="peer sr-only"
             />
-            <span className="text-slate-600">★ Saved ({bookmarkedIds.size})</span>
+            <span
+              className={`tnum inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm leading-[1.55] peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-signal ${
+                showSaved
+                  ? "border-signal bg-signal text-white hover:bg-signal-dark"
+                  : "border-rule text-ink hover:bg-paper-deep"
+              }`}
+            >
+              <span aria-hidden="true" className={showSaved ? "text-white" : "text-signal"}>
+                ★
+              </span>
+              <span>
+                Saved ({bookmarkedIds.size})
+              </span>
+            </span>
           </label>
           {(year || topic || author || q || ranked || hybrid || showSaved) && (
             <button
+              type="button"
               onClick={() => {
                 applyState({ q: "", year: "", topic: "", author: "", page: 1, ranked: false, hybrid: false });
                 setShowSaved(false);
               }}
-              className="rounded-md px-2 py-1.5 text-indigo-600 hover:text-indigo-800"
+              className="rounded-md px-2 py-1.5 text-sm leading-[1.55] text-signal hover:text-signal-dark"
             >
               Clear filters
             </button>
@@ -377,62 +387,61 @@ export default function SearchExplorer({
         </div>
         <div className="flex flex-wrap items-center gap-3 text-sm">
           <button
+            type="button"
             onClick={handleExport}
-            className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-slate-600 hover:bg-slate-50"
+            className="rounded-md border border-rule px-2 py-1.5 text-sm leading-[1.55] text-ink hover:bg-paper-deep"
           >
             Export saved
           </button>
-          <label className="flex items-center gap-2 text-slate-600">
-            <input
-              ref={fileRef}
-              type="file"
-              accept="application/json,.json"
-              className="hidden"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) void handleImportFile(f);
-                e.target.value = "";
-              }}
-              aria-label="Import bookmarks JSON"
-            />
-            <span
-              role="button"
-              tabIndex={0}
-              onClick={() => fileRef.current?.click()}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") fileRef.current?.click();
-              }}
-              className="cursor-pointer rounded-md border border-slate-300 bg-white px-2 py-1.5 text-slate-600 hover:bg-slate-50"
-            >
-              Import saved
-            </span>
-          </label>
-          <label className="flex items-center gap-2 text-slate-600">
+          <input
+            ref={fileRef}
+            type="file"
+            accept="application/json,.json"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void handleImportFile(f);
+              e.target.value = "";
+            }}
+            aria-label="Import bookmarks JSON"
+          />
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            className="rounded-md border border-rule px-2 py-1.5 text-sm leading-[1.55] text-ink hover:bg-paper-deep"
+          >
+            Import saved
+          </button>
+          <label className="flex cursor-pointer items-center gap-2 text-sm leading-[1.55] text-sage">
             <input
               type="checkbox"
               checked={replaceImport}
               onChange={(e) => setReplaceImport(e.target.checked)}
-              className="rounded border-slate-300"
+              className="h-4 w-4 accent-signal"
             />
             <span>Replace on import</span>
           </label>
-          {importMessage && <span className="text-slate-500">{importMessage}</span>}
+          {importMessage && <span className="text-xs leading-[1.55] text-sage">{importMessage}</span>}
         </div>
       </div>
 
       {error && (
-        <p className="mt-6 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {error}
-        </p>
+        <div role="alert" className="mt-6 bg-ink px-4 py-3">
+          <p className="text-sm leading-[1.55] text-paper">
+            Search failed. Check your connection and try again.
+          </p>
+          <p className="mt-1 text-xs leading-[1.55] text-paper">{error}</p>
+        </div>
       )}
 
       {showHistory && (
-        <div className="mt-4 rounded-lg border border-slate-200 bg-white px-4 py-3">
-          <div className="flex items-center justify-between">
-            <p className="text-xs font-medium text-slate-500">Recently viewed</p>
+        <div className="mt-6 border-t border-rule pt-3">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs leading-[1.55] text-sage">Recently viewed</p>
             <button
+              type="button"
               onClick={handleClearHistory}
-              className="text-xs text-indigo-600 hover:text-indigo-800"
+              className="rounded-md px-2 py-1 text-xs leading-[1.55] text-sage hover:text-ink"
             >
               Clear history
             </button>
@@ -446,7 +455,7 @@ export default function SearchExplorer({
                   key={hid}
                   href={`/papers/${hid}`}
                   title={meta?.title ?? `#${hid}`}
-                  className="max-w-xs truncate rounded bg-slate-100 px-2 py-1 text-xs text-slate-700 hover:bg-indigo-50"
+                  className="tnum max-w-xs truncate rounded-full border border-rule px-2.5 py-1 text-xs leading-[1.55] text-sage hover:bg-paper-deep hover:text-ink"
                 >
                   {meta ? `${meta.title} (${meta.year})` : `#${hid}`}
                 </a>
@@ -457,17 +466,73 @@ export default function SearchExplorer({
       )}
 
       <div className="mt-6">
-        <p className="text-sm text-slate-400" aria-live="polite">
+        <p className="tnum text-xs leading-[1.55] text-sage" aria-live="polite">
           {countLabel}
         </p>
-        <div className="mt-3 grid gap-3">
-          {items.map((paper) => (
-            <PaperCard key={paper.id} paper={paper} />
+        <div className="mt-3 divide-y divide-rule border-b border-t border-rule">
+          {items.map((paper, idx) => (
+            <PaperCard key={paper.id} paper={paper} rank={(page - 1) * PAGE_SIZE + idx + 1} />
           ))}
           {result && items.length === 0 && (
-            <p className="rounded-lg border border-slate-200 bg-white px-4 py-8 text-center text-slate-400">
-              {emptyLabel}
-            </p>
+            <>
+              {showSaved ? (
+                hasFilters ? (
+                  <div className="px-4 py-10 text-center">
+                    <p className="text-sm leading-[1.55] text-sage">
+                      No saved papers match these filters.
+                    </p>
+                    <p className="tnum mt-1 text-xs leading-[1.55] text-sage">
+                      Clear search to see all {bookmarkedIds.size} saved.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        applyState({ q: "", year: "", topic: "", author: "", page: 1, ranked: false, hybrid: false });
+                      }}
+                      className="mt-3 rounded-md border border-rule px-3 py-1.5 text-sm leading-[1.55] text-ink hover:bg-paper-deep"
+                    >
+                      Clear search
+                    </button>
+                  </div>
+                ) : (
+                  <div className="px-4 py-10 text-center">
+                    <p className="text-sm leading-[1.55] text-sage">No saved papers yet.</p>
+                    <p className="mt-1 text-xs leading-[1.55] text-sage">
+                      Save papers with the star to build a list.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowSaved(false);
+                        setPage(1);
+                      }}
+                      className="mt-3 rounded-md border border-rule px-3 py-1.5 text-sm leading-[1.55] text-ink hover:bg-paper-deep"
+                    >
+                      Browse papers
+                    </button>
+                  </div>
+                )
+              ) : (
+                <div className="px-4 py-10 text-center">
+                  <p className="text-sm leading-[1.55] text-sage">
+                    No papers match these filters.
+                  </p>
+                  <p className="mt-1 text-xs leading-[1.55] text-sage">
+                    Clear filters to browse all papers.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      applyState({ q: "", year: "", topic: "", author: "", page: 1, ranked: false, hybrid: false });
+                      setShowSaved(false);
+                    }}
+                    className="mt-3 rounded-md border border-rule px-3 py-1.5 text-sm leading-[1.55] text-ink hover:bg-paper-deep"
+                  >
+                    Clear filters
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>

@@ -1,3 +1,65 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/*
+ * Locked base layer — see /design/brief.md.
+ * Tokens live in tailwind.config.ts. Nothing here invents
+ * palette, type, or shadow values.
+ */
+
+@layer base {
+  body {
+    @apply bg-paper text-ink font-sans antialiased;
+  }
+
+  ::selection {
+    background: rgba(140, 43, 43, 0.18);
+  }
+
+  :focus-visible {
+    outline: 2px solid #8c2b2b;
+    outline-offset: 2px;
+  }
+}
+
+@layer utilities {
+  /* Tabular figures for years, counts, scores — never monospace. */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Single deliberate loading shimmer. Respects reduced motion. */
+  .skeleton {
+    position: relative;
+    overflow: hidden;
+    background: rgba(223, 220, 210, 0.45);
+  }
+  .skeleton::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      100deg,
+      transparent 20%,
+      rgba(255, 255, 255, 0.65) 50%,
+      transparent 80%
+    );
+    animation: ledger-shimmer 1.6s ease-in-out infinite;
+  }
+}
+
+@keyframes ledger-shimmer {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton::after {
+    animation: none;
+  }
+}

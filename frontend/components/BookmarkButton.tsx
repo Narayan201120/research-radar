@@ -30,13 +30,23 @@ export default function BookmarkButton({ paperId }: { paperId: number }) {
         setBookmarked(now);
         if (typeof window !== "undefined") window.dispatchEvent(new Event("rr:bookmarks"));
       }}
-      className={`shrink-0 rounded px-2 py-1 text-xs font-medium border transition ${
+      className={`flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-full p-3 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-signal focus-visible:ring-offset-2 focus-visible:ring-offset-paper ${
         bookmarked
-          ? "bg-indigo-600 text-white border-indigo-600"
-          : "bg-white text-slate-600 border-slate-200 hover:border-indigo-300"
+          ? "text-signal hover:bg-paper-deep hover:text-signal-dark"
+          : "text-sage hover:bg-paper-deep hover:text-signal"
       }`}
     >
-      {bookmarked ? "★ Saved" : "☆ Save"}
+      <svg
+        aria-hidden="true"
+        viewBox="0 0 24 24"
+        className="h-5 w-5"
+        fill={bookmarked ? "currentColor" : "none"}
+        stroke="currentColor"
+        strokeWidth={1.5}
+        strokeLinejoin="round"
+      >
+        <path d="M12 3.5l2.72 5.86 6.28.62-4.7 4.28 1.28 6.24L12 17.4l-5.58 3.1 1.28-6.24-4.7-4.28 6.28-.62L12 3.5z" />
+      </svg>
     </button>
   );
 }
