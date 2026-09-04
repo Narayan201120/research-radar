@@ -52,18 +52,41 @@
   minimum window, then crop). Trust puppeteer viewports, not
   CLI flags, for narrow widths.
 
+## P5_2-b close-out (2026-09-04)
+
+- Contrast metered: `sage #5F6E64` on `paper #F7F6F1` = 4.97
+  (AA pass for normal text). Two 12px action labels
+  (`Clear history`, history pills) defaulted to ink anyway —
+  interactive text is never quieter than its neighbors.
+- Logo redrawn from owner draft `new_logo/logo-v3.svg`:
+  palette remapped to tokens (depth filters kept per owner),
+  wordmark solid ink Newsreader, descriptor `Every paper, on
+  the record.` in sage sentence case. Mark-only cut drops
+  the tick ring + inner ring for 32px legibility.
+- Favicon note: `logo.png` is a 1600x500 lockup canvas with
+  transparent margins (matches old file size contract) —
+  suboptimal as a tab icon; a square 180px icon is a
+  follow-up if wanted.
+- Screenshots now cover: home/detail at 1440 + true-375,
+  empty-filtered, empty-saved, error (real app box via
+  API-only abort), history-visible (with resolved titles),
+  null-abstract (paper 10), 404, home/detail at 768.
+- Honestly skipped: `loading` (home SSR streams instantly,
+  skeleton never paints — keep the files for slow nets and
+  detail navigation), `similar-failed` (server-rendered, so
+  its failure UI is byte-identical to the empty case —
+  any shot would mislead).
+- Bug found by the sweep and fixed: history pills never
+  resolved in real browsers because the resolver used
+  server-side `fetchPaper` (`http://backend:8000` never
+  ships to clients). New `fetchPaperClient` on the public
+  base URL; detail page keeps server `fetchPaper`.
+
 ## Open items for a future pass
 
-- Remaining states not yet shot: loading, empty-saved,
-  empty-filtered, error, history-visible, null-abstract,
-  similar-failed, 404. Same puppeteer setup works.
-- 768px breakpoint not yet shot.
-- Contrast check on `sage #5F6E64` at 12px should be metered;
-  it is secondary-only by construction, but verify.
 - `Clear filters`, `Export`, pagination numbers have hover
   but no explicit `:focus-visible` beyond the global ring —
   confirm the global ring is visible on the filled signal chip.
 - History pills show full title only via tooltip; consider a
   wrapping variant if long titles dominate.
-- Logo mark (`logo-mark.svg`) still carries the old blue/ink
-  artwork — a ledger-redrawn mark would complete the identity.
+- Square favicon variant (see note above).

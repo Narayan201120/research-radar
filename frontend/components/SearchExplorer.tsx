@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 
 import PaperCard from "@/components/PaperCard";
 import Pagination from "@/components/Pagination";
-import { fetchPaper, fetchPapers, TOPIC_SLUGS, YEARS } from "@/lib/api";
+import { fetchPaperClient, fetchPapers, TOPIC_SLUGS, YEARS } from "@/lib/api";
 import {
   clearHistory,
   exportBookmarksJson,
@@ -131,7 +131,7 @@ export default function SearchExplorer({
     }
     let cancelled = false;
     setHistoryResolved(false);
-    Promise.allSettled(ids.map((id) => fetchPaper(String(id)))).then((outcomes) => {
+    Promise.allSettled(ids.map((id) => fetchPaperClient(String(id)))).then((outcomes) => {
       if (cancelled) return;
       const next: Record<number, { title: string; year: number }> = {};
       outcomes.forEach((r, i) => {
@@ -448,7 +448,7 @@ export default function SearchExplorer({
             <button
               type="button"
               onClick={handleClearHistory}
-              className="rounded-md px-2 py-1 text-xs leading-[1.55] text-sage hover:text-ink"
+              className="rounded-md px-2 py-1 text-xs leading-[1.55] text-ink hover:bg-paper-deep"
             >
               Clear history
             </button>
@@ -462,7 +462,7 @@ export default function SearchExplorer({
                   key={hid}
                   href={`/papers/${hid}`}
                   title={meta?.title ?? `#${hid}`}
-                  className="tnum max-w-xs truncate rounded-full border border-rule px-2.5 py-1 text-xs leading-[1.55] text-sage hover:bg-paper-deep hover:text-ink"
+                  className="tnum max-w-xs truncate rounded-full border border-rule px-2.5 py-1 text-xs leading-[1.55] text-ink hover:bg-paper-deep"
                 >
                   {meta ? `${meta.title} (${meta.year})` : `#${hid}`}
                 </a>

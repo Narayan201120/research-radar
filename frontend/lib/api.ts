@@ -43,6 +43,13 @@ export function fetchPaper(id: string): Promise<PaperDetail> {
   return getJson<PaperDetail>(SERVER_API_BASE_URL, `/papers/${id}`);
 }
 
+// Browser-side single-paper fetch. fetchPaper uses SERVER_API_BASE_URL,
+// which is unreachable from real browsers (non-NEXT_PUBLIC env never ships
+// to the client bundle), so client components must use this instead.
+export function fetchPaperClient(id: string): Promise<PaperDetail> {
+  return getJson<PaperDetail>(API_BASE_URL, `/papers/${id}`);
+}
+
 export function fetchSimilar(id: string): Promise<SimilarItem[]> {
   return getJson<SimilarItem[]>(SERVER_API_BASE_URL, `/papers/${id}/similar`);
 }
