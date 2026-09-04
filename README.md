@@ -8,10 +8,10 @@ with **BM25 ranked search**, **RRF hybrid**, **Find Similar Papers** powered by 
 
 | Layer      | Technology |
 | ---------- | ---------- |
-| Frontend   | Next.js 16 (App Router, Turbopack), React 19, Tailwind CSS |
+| Frontend   | Next.js 16 (App Router, Turbopack), React 19, Tailwind CSS — citation-ledger redesign (Newsreader + Inter, locked tokens, ruled rows; see Frontend) |
 | Backend    | FastAPI, SQLAlchemy 2.0, Alembic |
 | Database   | PostgreSQL 16 via `paradedb/paradedb:0.25.3-pg16` (pgvector + pg_search BM25, single image) |
-| Search     | ParadeDB BM25 (`paper_search_idx` on `title`+`abstract`, `paradedb.score` ranking) with ILIKE fallback; `?ranked=true` BM25, `?hybrid=true` RRF `K=60` (vector 10 + BM25 10 → 10, filters after, `422` if both) |
+| Search     | ParadeDB BM25 (`paper_search_idx` on `title`+`abstract`, `paradedb.score` ranking) with ILIKE fallback; `?ranked=true` BM25, `?hybrid=true` RRF `K=60` (vector 100 + BM25 100 → fused window ≤200, filters before in SQL, `422` if both) |
 | Similarity | Semantic `paper_embedding` (384-d `all-MiniLM-L6-v2` via fastembed ONNX, HNSW `vector_cosine_ops`, ANN at read time, `O(Δ)` write + `O(log N)` read) — `paper_similarity` snapshot removed in `a1b2c3d4e5f6` |
 | Tests      | pytest (99 tests: 90 SQLite hermetic + 9 Postgres integration — `pytest -m postgres` for BM25/ANN/hybrid) |
 | Ops        | `ingest_dlq` table + `retry_dlq` replay, shared HTTP retry (`Retry-After` + jitter), scheduler backoff, zero-dep `GET /metrics` |
@@ -87,6 +87,39 @@ at startup — catching up any churn while the stack was down — and then every
 - Papers with no text (no title/abstract, as returned by OpenAlex for ~12% of
   works) contribute zero vectors and return `[]` (permanently skipped by
   `scripts/backfill_embeddings.py`). At 500 papers all live rows are embedded.
+
+## Frontend
+
+Citation-ledger redesign (plan `design/brief.md`, notes `design/critique-notes.md`,
+screenshots `design/screenshots/`), built with the `frontend-design` skill.
+One visual idea: ruled index rows with rank numerals instead of a card grid.
+
+- Tokens (locked in `tailwind.config.ts`, nowhere else): `paper #F7F6F1`
+  ground, `paper-deep #ECEAE2` hover wash, `ink #1B2431` text,
+  `signal #8C2B2B` single oxblood accent (saved star, active states, rank
+  numerals), `sage #5F6E64` secondary text, `rule #DFDCD2` hairlines.
+  No shadows for hierarchy; radius survives only on controls and pills.
+- Type: Newsreader serif (wordmark, titles, abstract at ~68ch) + Inter
+  grotesk (rows, controls, meta) via `next/font`, tabular figures for
+  years/counts/scores (never monospace). Left-aligned throughout; 404 alone
+  centers.
+- Routes: `/` home (header with scan-rule tick, instrument strip, ruled
+  rows with rank + star + year, pagination), `/papers/[id]` detail
+  (ledger fact lines, serif abstract, similar rows on the same row system),
+  `404`. Skeletons (`app/loading.tsx`, `app/papers/[id]/loading.tsx`) use
+  the single shimmer utility (reduced-motion safe). Motion answers actions
+  only (skeleton shimmer, save-confirm fill).
+- States: `aria-live` count line, three directional empty variants
+  (saved-match, saved-empty, filtered-empty), ink error panel, history
+  strip with titles, bookmarks export/import. A11y floor: global
+  signal focus ring, `aria-pressed` save toggle, `aria-current` page,
+  labeled Prev/Next, full keyboard path.
+- Mobile 375px: rows collapse identically on home and detail (rank +
+  title + star on line 1, meta with flattened year on line 2), verified
+  via puppeteer viewport plus DOM measurement.
+- Fixed during verification: an infinite `router.replace` render loop
+  (~880 replaces in 12s idle from an unmemoized URL-sync object) that
+  flashed the tab loading state — memoized on primitives (2 replaces).
 
 ## API
 
@@ -174,10 +207,11 @@ backend/
   tests/            # pytest suite (conftest SQLite shim, @pytest.mark.postgres gate, abstract_recovery)
   requirements.in/txt  # pip-tools pinned
 frontend/
-  app/              # Next.js pages (search, /papers/[id], 404)
+  app/              # Next.js pages (search, /papers/[id], 404) + loading skeletons
   components/       # SearchExplorer, PaperCard, Pagination, BookmarkButton, HistoryPusher
   lib/              # typed API client, config, debounce hook, bookmarks (localStorage)
   public/           # logo assets
+design/             # brief.md (locked tokens), critique-notes.md, screenshots/
 ```
 
 ## Environment variables
