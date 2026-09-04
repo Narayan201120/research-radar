@@ -8,8 +8,8 @@ with **BM25 ranked search**, **RRF hybrid**, **Find Similar Papers** powered by 
 
 | Layer      | Technology |
 | ---------- | ---------- |
-| Frontend   | Next.js 16 (App Router, Turbopack), React 19, Tailwind CSS — citation-ledger redesign (Newsreader + Inter, locked tokens, ruled rows; see Frontend) |
-| Backend    | FastAPI, SQLAlchemy 2.0, Alembic |
+| Frontend   | Next.js 16 (App Router, Turbopack), React 19, Tailwind CSS, Node 22 — citation-ledger redesign (Newsreader + Inter, locked tokens, ruled rows; see Frontend) |
+| Backend    | FastAPI, SQLAlchemy 2.0 (`<2.1` guard), Alembic, Python 3.13, `beautifulsoup4 4.15` + `lxml 6` |
 | Database   | PostgreSQL 16 via `paradedb/paradedb:0.25.3-pg16` (pgvector + pg_search BM25, single image) |
 | Search     | ParadeDB BM25 (`paper_search_idx` on `title`+`abstract`, `paradedb.score` ranking) with ILIKE fallback; `?ranked=true` BM25, `?hybrid=true` RRF `K=60` (vector 100 + BM25 100 → fused window ≤200, filters before in SQL, `422` if both) |
 | Similarity | Semantic `paper_embedding` (384-d `all-MiniLM-L6-v2` via fastembed ONNX, HNSW `vector_cosine_ops`, ANN at read time, `O(Δ)` write + `O(log N)` read) — `paper_similarity` snapshot removed in `a1b2c3d4e5f6` |
