@@ -33,8 +33,14 @@ Modes:
   On SQLite the dispatcher degrades hybrid==ranked==legacy, so this script
   warns when all three orderings are identical (SQLite degrade signal).
 
-Exit code is ALWAYS 0 (3A info-only). --fail-under-mrr is accepted for
-forward-compat but only prints a warning, never fails.
+Exit codes:
+
+- 0 when no threshold flags are given (default info-only behavior —
+  missing qrels, unreachable backend, and the SQLite-degrade warning
+  all still exit 0).
+- With --fail-under-mrr and/or --fail-under-ndcg: exit 1 when the best
+  (max over modes) MRR / NDCG@10 respectively falls below the given
+  threshold (the warning is still printed); otherwise 0.
 """
 
 from __future__ import annotations
@@ -245,9 +251,31 @@ def detect_degrade(results: dict[str, dict[str, list[dict]]], qrels: list[dict])
     return True
 
 
+def threshold_exit_code(agg: dict[str, dict[str, float]], args: argparse.Namespace) -> int:
+    """Return 1 when a --fail-under-* threshold trips, else 0 (warnings kept)."""
+    code = 0
+    if args.fail_under_mrr is not None:
+        best = max(agg[m]["mrr"] for m in MODES)
+        if best < args.fail_under_mrr:
+            print(
+                f"WARNING: best MRR {best:.4f} < --fail-under-mrr {args.fail_under_mrr} (exit 1)",
+                file=sys.stderr,
+            )
+            code = 1
+    if getattr(args, "fail_under_ndcg", None) is not None:
+        best = max(agg[m]["ndcg"] for m in MODES)
+        if best < args.fail_under_ndcg:
+            print(
+                f"WARNING: best NDCG@10 {best:.4f} < --fail-under-ndcg {args.fail_under_ndcg} (exit 1)",
+                file=sys.stderr,
+            )
+            code = 1
+    return code
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     default_qrels = Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "qrels.jsonl"
-    ap = argparse.ArgumentParser(description="Compare legacy vs ranked vs hybrid search (info-only, exit 0).")
+    ap = argparse.ArgumentParser(description="Compare legacy vs ranked vs hybrid search (exit 0 unless a --fail-under-* threshold trips).")
     ap.add_argument("--qrels", default=str(default_qrels), help="path to qrels.jsonl (default: tests/fixtures/qrels.jsonl)")
     ap.add_argument("--base-url", default="http://localhost:8000", help="base URL for --mode live (default: http://localhost:8000)")
     ap.add_argument(
@@ -262,7 +290,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--fail-under-mrr",
         type=float,
         default=None,
-        help="optional threshold; info-only warning when all modes score below it (exit stays 0)",
+        help="fail with exit 1 when max(mode MRRs) is below this threshold (default: None, info-only)",
+    )
+    ap.add_argument(
+        "--fail-under-ndcg",
+        type=float,
+        default=None,
+        help="fail with exit 1 when max(mode NDCG@10) is below this threshold (default: None, info-only)",
     )
     return ap.parse_args(argv)
 
@@ -301,7 +335,7 @@ def main(argv: list[str] | None = None) -> int:
             print("|---|---|---|---|---|")
             for mode in MODES:
                 print(f"| {mode} | {agg[mode]['mrr']:.4f} | {agg[mode]['ndcg']:.4f} | {agg[mode]['recall']:.4f} | {wins[mode]} |")
-            return 0
+            return threshold_exit_code(agg, args)
         client, engine = client_and_engine  # type: ignore[misc]
         try:
             for qrel in qrels:
@@ -354,16 +388,7 @@ def main(argv: list[str] | None = None) -> int:
     for w in warnings:
         print(f"WARNING: {w}", file=sys.stderr)
 
-    if args.fail_under_mrr is not None:
-        best = max(agg[m]["mrr"] for m in MODES)
-        if best < args.fail_under_mrr:
-            print(
-                f"WARNING: best MRR {best:.4f} < --fail-under-mrr {args.fail_under_mrr} "
-                "(info-only, exit stays 0)",
-                file=sys.stderr,
-            )
-
-    return 0  # info-only by design
+    return threshold_exit_code(agg, args)
 
 
 if __name__ == "__main__":

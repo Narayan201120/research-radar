@@ -58,3 +58,44 @@ jobs:
         run: npx tsc --noEmit
       - name: Build
         run: npm run build
+
+  eval:
+    runs-on: ubuntu-latest
+    continue-on-error: true # P5_2-c: advisory until 3-5 baselines set bands; then drop this line to enforce
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: paradedb/paradedb:0.25.3-pg16
+        env:
+          POSTGRES_USER: research
+          POSTGRES_PASSWORD: research
+          POSTGRES_DB: research_radar
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U research -d research_radar"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://research:research@localhost:5432/research_radar
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install pinned dependencies
+        run: pip install -r requirements.txt
+      - name: Seed eval dataset
+        run: python scripts/seed_eval.py
+      - name: Run eval (info-only)
+        run: python scripts/eval_search.py --mode testclient-postgres > eval-table.md; cat eval-table.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eval-table
+          path: backend/eval-table.md
+          retention-days: 30

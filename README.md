@@ -188,7 +188,7 @@ reconstruction (including `abstract_recovery` Crossref→arXiv→HTML waterfall,
 verifier (private-IP block), and live BM25 relevance + ANN similarity + hybrid fusion (`tests/test_postgres.py`,
 `HashingFakeProvider`/`FastEmbedProvider`, TRUNCATE per test). Hermetic stays green without Docker
 (9 skipped); CI `services: postgres` (`paradedb/paradedb:0.25.3-pg16`) runs both
-steps for 99 passed. Search eval `tests/fixtures/qrels.jsonl` (8 queries, substring relevance) is info-only, not a gate.
+steps for 99 passed, plus a non-blocking CI `eval` job (`seed_eval.py` fixture corpus + `eval_search.py --mode testclient-postgres`, table uploaded as artifact for 30d, `continue-on-error` until 3–5 baselines set bands). Thresholds `--fail-under-mrr/--fail-under-ndcg` are wired (nonzero exit) but unenforced by default.
 
 Abstract backfill: `docker compose exec backend python -m scripts.backfill_abstracts --dry-run` (57 recoverable, `1/57` via `arxiv`, remainder via HTML) → `python -m scripts.backfill_abstracts` (polite 0.5s, re-embeds, keyset loop with no-skip).
 
