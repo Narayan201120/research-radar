@@ -1,11 +1,13 @@
 import time
+from math import ceil
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from app.api.health import router as health_router
 from app.api.papers import router as papers_router
+from app.core.rate_limit import limiter
 from app.core.settings import get_settings
 
 # P5-C4: process start for /metrics uptime. Stdlib only — no prometheus_client
@@ -29,6 +31,24 @@ def create_app() -> FastAPI:
 
     app.include_router(health_router)
     app.include_router(papers_router)
+
+    @app.middleware("http")
+    async def rate_limit_middleware(request: Request, call_next):
+        if not request.url.path.startswith("/papers"):
+            return await call_next(request)
+        limit = get_settings().rate_limit_per_minute
+        if limit <= 0:
+            return await call_next(request)
+        limiter.per_minute = limit
+        key = getattr(request.client, "host", None) or "unknown"
+        retry_after = limiter.check(key)
+        if retry_after is not None:
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Rate limit exceeded, retry shortly"},
+                headers={"Retry-After": str(int(ceil(retry_after)))},
+            )
+        return await call_next(request)
 
     @app.get("/metrics", include_in_schema=False)
     def metrics() -> PlainTextResponse:

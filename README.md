@@ -13,7 +13,7 @@ with **BM25 ranked search**, **RRF hybrid**, **Find Similar Papers** powered by 
 | Database   | PostgreSQL 16 via `paradedb/paradedb:0.25.3-pg16` (pgvector + pg_search BM25, single image) |
 | Search     | ParadeDB BM25 (`paper_search_idx` on `title`+`abstract`, `paradedb.score` ranking) with ILIKE fallback; `?ranked=true` BM25, `?hybrid=true` RRF `K=60` (vector 100 + BM25 100 → fused window ≤200, filters before in SQL, `422` if both) |
 | Similarity | Semantic `paper_embedding` (384-d `all-MiniLM-L6-v2` via fastembed ONNX, HNSW `vector_cosine_ops`, ANN at read time, `O(Δ)` write + `O(log N)` read) — `paper_similarity` snapshot removed in `a1b2c3d4e5f6` |
-| Tests      | pytest (99 tests: 90 SQLite hermetic + 9 Postgres integration — `pytest -m postgres` for BM25/ANN/hybrid) |
+| Tests      | pytest (105 tests: 96 SQLite hermetic + 9 Postgres integration — `pytest -m postgres` for BM25/ANN/hybrid) |
 | Ops        | `ingest_dlq` table + `retry_dlq` replay, shared HTTP retry (`Retry-After` + jitter), scheduler backoff, zero-dep `GET /metrics` |
 | Infra      | Docker Compose (postgres + backend + frontend + scheduler sidecar) |
 
@@ -170,16 +170,21 @@ Top-5 similar papers, self-excluded by construction, scores rounded to 4 decimal
 [{"id": 2, "title": "LLaMA: ...", "similarity_score": 0.8765}]
 ```
 
+### Access control
+
+- Rate limit: per-IP cap on all `/papers` routes (`RATE_LIMIT_PER_MINUTE`, default 60/min, `0` disables). Over the cap → `429 {"detail": "Rate limit exceeded, retry shortly"}` with a `Retry-After` header. `/health` and `/metrics` are never counted.
+- API key: optional, off by default. `API_KEY` empty means open. When set, `/papers` routes require the `X-API-Key` header (`401 {"detail": "Invalid or missing API key"}` without it); `/health` and `/metrics` stay public. The browser frontend calls the backend directly, so a shipped key is visible in network traffic — real enforcement for browsers needs a server-side proxy, still out of scope.
+
 ## Tests
 
 ```bash
-docker compose exec backend python -m pytest        # all tests (99: 90 hermetic + 9 gate live)
-python -m pytest -q                                 # hermetic from backend/ with local venv (90, 9 skipped without Docker)
+docker compose exec backend python -m pytest        # all tests (105: 96 hermetic + 9 gate live)
+python -m pytest -q                                 # hermetic from backend/ with local venv (96, 9 skipped without Docker)
 python -m pytest -m postgres -q                     # Postgres gate only (9 tests, requires ParadeDB — BM25/ANN/hybrid)
 python scripts/eval_search.py                       # search scorecard vs live backend (legacy vs ranked vs hybrid, info-only)
 ```
 
-99 tests: 90 hermetic per-test in-memory SQLite schema (no network) + 9
+105 tests: 96 hermetic per-test in-memory SQLite schema (no network) + 9
 Postgres/ParadeDB integration — API endpoints (search/filters/pagination/404s/LIKE
 escaping, `?ranked`/`?hybrid`/`?ids` validation `422` and dialect-guard degradation, `hybrid` RRF `K=60` filters-before with fusion-window total), `similar` returns
 `[]` on SQLite (no vector/HNSW), ingest idempotency (fake client fetched twice →
@@ -188,11 +193,11 @@ reconstruction (including `abstract_recovery` Crossref→arXiv→HTML waterfall,
 verifier (private-IP block), and live BM25 relevance + ANN similarity + hybrid fusion (`tests/test_postgres.py`,
 `HashingFakeProvider`/`FastEmbedProvider`, TRUNCATE per test). Hermetic stays green without Docker
 (9 skipped); CI `services: postgres` (`paradedb/paradedb:0.25.3-pg16`) runs both
-steps for 99 passed, plus a non-blocking CI `eval` job (`seed_eval.py` fixture corpus + `eval_search.py --mode testclient-postgres`, table uploaded as artifact for 30d, `continue-on-error` until 3–5 baselines set bands). Thresholds `--fail-under-mrr/--fail-under-ndcg` are wired (nonzero exit) but unenforced by default.
+steps for 105 passed, plus a non-blocking CI `eval` job (`seed_eval.py` fixture corpus + `eval_search.py --mode testclient-postgres`, table uploaded as artifact for 30d, `continue-on-error` until 3–5 baselines set bands). Thresholds `--fail-under-mrr/--fail-under-ndcg` are wired (nonzero exit) but unenforced by default.
 
 Abstract backfill: `docker compose exec backend python -m scripts.backfill_abstracts --dry-run` (57 recoverable, `1/57` via `arxiv`, remainder via HTML) → `python -m scripts.backfill_abstracts` (polite 0.5s, re-embeds, keyset loop with no-skip).
 
-Ops: `GET /metrics` (zero-dep Prometheus text: uptime + paper count) for scrapers; DLQ replay `python -m scripts.retry_dlq --limit 20` (dry-run marking, no refetch in v1). Rate limit and auth remain deferred.
+Ops: `GET /metrics` (zero-dep Prometheus text: uptime + paper count) for scrapers; DLQ replay `python -m scripts.retry_dlq --limit 20` (dry-run marking, no refetch in v1). Per-IP rate limit on `/papers` (60/min, `429` + `Retry-After`, health/metrics exempt) and optional API key (`X-API-Key`, open when unset).
 
 ## Repository layout
 
@@ -231,3 +236,5 @@ design/             # brief.md (locked tokens), critique-notes.md, screenshots/
 | `EMBEDDING_MODEL_NAME`  | `sentence-transformers/all-MiniLM-L6-v2` (384-d, baked into image at `/app/.fastembed`) |
 | `API_BASE_URL` (frontend) | `http://backend:8000` |
 | `NEXT_PUBLIC_API_BASE_URL` (frontend build arg) | `http://localhost:8000` |
+| `RATE_LIMIT_PER_MINUTE` | `60` (per-IP cap on `/papers` routes; `0` disables; over cap → `429` + `Retry-After`; `/health` and `/metrics` exempt) |
+| `API_KEY` | empty (open). When set, `/papers` routes require `X-API-Key` header (`401` otherwise); `/health` and `/metrics` stay public |

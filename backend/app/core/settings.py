@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     scheduler_retry_minutes: float = 5.0
     scheduler_backoff_max_minutes: float = 60.0
     recovery_limit: int = 20
+    rate_limit_per_minute: int = 60
+    api_key: str = ""
     embedding_model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
     similarity_backend: str = "embeddings"  # tfidf | embeddings (default semantic; tfidf via env for revert)
 

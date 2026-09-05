@@ -63,6 +63,15 @@ def client(db):
     app.dependency_overrides.clear()
 
 
+@pytest.fixture(autouse=True)
+def _clear_rate_limit():
+    from app.core.rate_limit import clear_rate_limit
+
+    clear_rate_limit()
+    yield
+    clear_rate_limit()
+
+
 # ---------------------------------------------------------------------------
 # Postgres / ParadeDB fixtures — only active when DATABASE_URL points to a
 # live ParadeDB instance. Tests using these fixtures are marked

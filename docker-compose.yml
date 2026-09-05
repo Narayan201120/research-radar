@@ -27,6 +27,8 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-research}:${POSTGRES_PASSWORD:-research}@postgres:5432/${POSTGRES_DB:-research_radar}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
       INGEST_ON_BOOT: ${INGEST_ON_BOOT:-true}
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-60}
+      API_KEY: ${API_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy

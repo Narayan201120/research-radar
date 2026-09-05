@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.orm import Session, selectinload
 
-from app.api.deps import get_db
+from app.api.deps import get_db, require_api_key
 from app.models import Author, Paper, Topic
 from app.schemas.papers import (
     PaperDetail,
@@ -13,7 +13,7 @@ from app.schemas.papers import (
     SimilarItem,
 )
 
-router = APIRouter(tags=["papers"])
+router = APIRouter(tags=["papers"], dependencies=[Depends(require_api_key)])
 
 DbSession = Annotated[Session, Depends(get_db)]
 
