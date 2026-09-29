@@ -17,6 +17,25 @@ from app.models import Paper
 EMBEDDING_DIM = 384
 
 
+def _embed_with_split(model, texts: list[str]) -> list[list[float]]:
+    """Embed a batch, bisecting on ragged-tokenizer failures.
+
+    fastembed builds its ONNX input with a bare ``np.array`` over token id
+    lists. The shipped MiniLM tokenizer pads to a fixed 128 and truncates
+    at 256, so any batch mixing lengths above 128 tokens raises ValueError
+    and would abort the whole ingest. Bisecting down to single texts always
+    terminates because one sequence always forms a valid array, and order is
+    preserved by construction. Singles that genuinely fail still raise.
+    """
+    try:
+        return [vector.tolist() for vector in model.embed(texts)]
+    except ValueError:
+        if len(texts) == 1:
+            raise
+        mid = len(texts) // 2
+        return _embed_with_split(model, texts[:mid]) + _embed_with_split(model, texts[mid:])
+
+
 @runtime_checkable
 class EmbeddingProvider(Protocol):
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
@@ -45,7 +64,7 @@ class FastEmbedProvider:
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
-        return [vector.tolist() for vector in self._ensure_model().embed(list(texts))]
+        return _embed_with_split(self._ensure_model(), list(texts))
 
 
 class HashingFakeProvider:
