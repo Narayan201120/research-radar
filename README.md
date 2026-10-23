@@ -94,8 +94,7 @@ Radar-scope console redesign, built with the `frontend-design` skill. One
 visual idea: the instrument itself — a live radar scope whose blips are the
 latest papers, results as a numbered detection log, paper pages as target
 files. The previous citation-ledger UI (Newsreader + Inter, ruled rows,
-plan `design/brief.md`) is kept in `frontend-legacy/` and on the
-`frontend-legacy` branch.
+plan `design/brief.md`) is preserved on the `frontend-legacy` branch.
 
 - Tokens (locked in `tailwind.config.ts`, nowhere else): `deep #0E3050`
   blueprint ground under a faint graph-paper grid, `panel #143C60` console,
@@ -230,7 +229,6 @@ frontend/
   components/       # RadarScope, SearchConsole, DetectionRow, SaveButton, Pagination, SiteHeader, HistoryPusher, CornerTicks
   lib/              # typed API client, config, debounce hook, bookmarks (localStorage)
   public/           # scope-glyph logo
-frontend-legacy/    # previous citation-ledger UI (also on the frontend-legacy branch)
 design/             # brief.md (locked tokens for the legacy UI), critique-notes.md, screenshots/
 ```
 
