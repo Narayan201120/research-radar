@@ -127,10 +127,13 @@ plan `design/brief.md`) is preserved on the `frontend-legacy` branch.
   docker-internal host first and fall back to the browser-facing URL, so
   the app also runs against a localhost backend outside Docker.
 - A11y floor: global amber focus ring, `aria-pressed` save toggle and mode
-  buttons, `aria-current` page, labeled Prev/Next, labeled fields, 44px
-  scope-blip hit areas, full keyboard path (blip focus drives the CONTACT
-  readout). Mobile 375px: rows collapse to two lines (rank + title + star,
-  then authors with flattened year/citations), no horizontal overflow.
+  buttons, `aria-current` page, labeled Prev/Next, labeled fields, custom
+  listbox dropdowns for Year and Topic matching the console (arrow/Enter/
+  Escape keyboard path, `aria-expanded`/`aria-activedescendant` wiring),
+  44px scope-blip hit areas, full keyboard path (blip focus drives the
+  CONTACT readout). Mobile 375px: rows collapse to two lines (rank + title
+  + star, then authors with flattened year/citations), no horizontal
+  overflow, dropdown popups stay inside the viewport.
 
 ## API
 

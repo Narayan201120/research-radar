@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 
 import DetectionRow from "@/components/DetectionRow";
 import Pagination from "@/components/Pagination";
+import Select from "@/components/Select";
 import { fetchPaperClient, fetchPapers, TOPIC_SLUGS, YEARS } from "@/lib/api";
 import {
   clearHistory,
@@ -326,49 +327,36 @@ export default function SearchConsole({
               </div>
             </div>
 
-            <div>
-              <label htmlFor="rr-year" className={labelCls}>
-                Year
-              </label>
-              <select
-                id="rr-year"
-                value={year}
-                onChange={(e) => {
-                  setYear(e.target.value);
-                  setPage(1);
-                }}
-                className={`${fieldCls} font-mono text-[13px] tabular-nums`}
-              >
-                <option value="">Any</option>
-                {YEARS.map((y) => (
-                  <option key={y} value={y}>
-                    {y}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <Select
+              id="rr-year"
+              label="Year"
+              value={year}
+              options={[
+                { value: "", label: "Any" },
+                ...YEARS.map((y) => ({ value: String(y), label: String(y) })),
+              ]}
+              onChange={(v) => {
+                setYear(v);
+                setPage(1);
+              }}
+              className="w-24"
+              mono
+            />
 
-            <div>
-              <label htmlFor="rr-topic" className={labelCls}>
-                Topic
-              </label>
-              <select
-                id="rr-topic"
-                value={topic}
-                onChange={(e) => {
-                  setTopic(e.target.value);
-                  setPage(1);
-                }}
-                className={`${fieldCls} text-sm`}
-              >
-                <option value="">All topics</option>
-                {TOPIC_SLUGS.map((t) => (
-                  <option key={t.slug} value={t.slug}>
-                    {t.name}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <Select
+              id="rr-topic"
+              label="Topic"
+              value={topic}
+              options={[
+                { value: "", label: "All topics" },
+                ...TOPIC_SLUGS.map((t) => ({ value: t.slug, label: t.name })),
+              ]}
+              onChange={(v) => {
+                setTopic(v);
+                setPage(1);
+              }}
+              className="w-52"
+            />
 
             <div>
               <label htmlFor="rr-author" className={labelCls}>
