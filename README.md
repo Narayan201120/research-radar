@@ -8,7 +8,7 @@ with **BM25 ranked search**, **RRF hybrid**, **Find Similar Papers** powered by 
 
 | Layer      | Technology |
 | ---------- | ---------- |
-| Frontend   | Next.js 16 (App Router, Turbopack), React 19, Tailwind CSS, Node 22 — citation-ledger redesign (Newsreader + Inter, locked tokens, ruled rows; see Frontend) |
+| Frontend   | Next.js 16 (App Router, Turbopack), React 19, Tailwind CSS, Node 22 — radar-scope console redesign (Overpass + IBM Plex Mono, blueprint tokens; see Frontend) |
 | Backend    | FastAPI, SQLAlchemy 2.0 (`<2.1` guard), Alembic, Python 3.13, `beautifulsoup4 4.15` + `lxml 6` |
 | Database   | PostgreSQL 16 via `paradedb/paradedb:0.25.3-pg16` (pgvector + pg_search BM25, single image) |
 | Search     | ParadeDB BM25 (`paper_search_idx` on `title`+`abstract`, `paradedb.score` ranking) with ILIKE fallback; `?ranked=true` BM25, `?hybrid=true` RRF `K=60` (vector 100 + BM25 100 → fused window ≤200, filters before in SQL, `422` if both) |
@@ -90,36 +90,50 @@ at startup — catching up any churn while the stack was down — and then every
 
 ## Frontend
 
-Citation-ledger redesign (plan `design/brief.md`, notes `design/critique-notes.md`,
-screenshots `design/screenshots/`), built with the `frontend-design` skill.
-One visual idea: ruled index rows with rank numerals instead of a card grid.
+Radar-scope console redesign, built with the `frontend-design` skill. One
+visual idea: the instrument itself — a live radar scope whose blips are the
+latest papers, results as a numbered detection log, paper pages as target
+files. The previous citation-ledger UI (Newsreader + Inter, ruled rows,
+plan `design/brief.md`) is kept in `frontend-legacy/` and on the
+`frontend-legacy` branch.
 
-- Tokens (locked in `tailwind.config.ts`, nowhere else): `paper #F7F6F1`
-  ground, `paper-deep #ECEAE2` hover wash, `ink #1B2431` text,
-  `signal #8C2B2B` single oxblood accent (saved star, active states, rank
-  numerals), `sage #5F6E64` secondary text, `rule #DFDCD2` hairlines.
-  No shadows for hierarchy; radius survives only on controls and pills.
-- Type: Newsreader serif (wordmark, titles, abstract at ~68ch) + Inter
-  grotesk (rows, controls, meta) via `next/font`, tabular figures for
-  years/counts/scores (never monospace). Left-aligned throughout; 404 alone
+- Tokens (locked in `tailwind.config.ts`, nowhere else): `deep #0E3050`
+  blueprint ground under a faint graph-paper grid, `panel #143C60` console,
+  `well #0A2438` wells, `ice #EAF4FC` text, `haze #A9C6DC` secondary text,
+  `line #3E6E96` / `linebright #9FC4DE` linework, `signal #FFB03C` single
+  amber accent (sweep, active mode, saved star, similarity bars). No cards,
+  no shadows, no gradients, no rounded corners; console panels get two
+  clipped corners, the page column gets blueprint corner ticks.
+- Type: Overpass (Highway Gothic signage heritage; wordmark, titles, rows,
+  controls) + IBM Plex Mono for measurement readouts — rank numerals, years,
+  counts, designations, column headers — via `next/font`. Abstract reads in
+  Overpass at 17px/1.75 capped near 64ch. Left-aligned throughout; 404 alone
   centers.
-- Routes: `/` home (header with scan-rule tick, instrument strip, ruled
-  rows with rank + star + year, pagination), `/papers/[id]` detail
-  (ledger fact lines, serif abstract, similar rows on the same row system),
-  `404`. Skeletons (`app/loading.tsx`, `app/papers/[id]/loading.tsx`) use
-  the single shimmer utility (reduced-motion safe). Motion answers actions
-  only (skeleton shimmer, save-confirm fill).
+- Routes: `/` home (scope hero: rings, degree ticks, 8s rotating sweep
+  paused under reduced motion, twelve latest papers as clickable blips with
+  a hover/focus-driven CONTACT readout; search console with a
+  Standard / Ranked (BM25) / Hybrid (RRF) segmented mode control, year,
+  topic, author filters; detection log with rank, authors, citations, year,
+  star; pagination), `/papers/[id]` detail (target file: designation line,
+  topic chips, coordinates strip with year/citations/DOI, abstract, similar
+  papers with amber score bars), `404` ("404 / NO CONTACT"). Skeletons
+  (`app/loading.tsx`, `app/papers/[id]/loading.tsx`) use the single shimmer
+  utility (reduced-motion safe). Non-user-triggered motion is the sweep
+  alone; everything else answers an action.
 - States: `aria-live` count line, three directional empty variants
-  (saved-match, saved-empty, filtered-empty), ink error panel, history
-  strip with titles, bookmarks export/import. A11y floor: global
-  signal focus ring, `aria-pressed` save toggle, `aria-current` page,
-  labeled Prev/Next, full keyboard path.
-- Mobile 375px: rows collapse identically on home and detail (rank +
-  title + star on line 1, meta with flattened year on line 2), verified
-  via puppeteer viewport plus DOM measurement.
-- Fixed during verification: an infinite `router.replace` render loop
-  (~880 replaces in 12s idle from an unmemoized URL-sync object) that
-  flashed the tab loading state — memoized on primitives (2 replaces).
+  (saved-match, saved-empty, filtered-empty), amber-bordered error panel,
+  history strip with titles, bookmarks export/import — stored under the
+  same `rr:bookmarks` / `rr:history` localStorage keys as the legacy UI, so
+  saved papers survive the redesign. Server-side detail fetches try the
+  docker-internal host first and fall back to the browser-facing URL, so
+  the app also runs against a localhost backend outside Docker.
+- A11y floor: global amber focus ring, `aria-pressed` save toggle and mode
+  buttons, `aria-current` page, labeled Prev/Next, labeled fields, 44px
+  scope-blip hit areas, full keyboard path (blip focus drives the CONTACT
+  readout). Mobile 375px: rows collapse to two lines (rank + title + star,
+  then authors with flattened year/citations), no horizontal overflow.
+
+## API
 
 ## API
 
@@ -213,10 +227,11 @@ backend/
   requirements.in/txt  # pip-tools pinned
 frontend/
   app/              # Next.js pages (search, /papers/[id], 404) + loading skeletons
-  components/       # SearchExplorer, PaperCard, Pagination, BookmarkButton, HistoryPusher
+  components/       # RadarScope, SearchConsole, DetectionRow, SaveButton, Pagination, SiteHeader, HistoryPusher, CornerTicks
   lib/              # typed API client, config, debounce hook, bookmarks (localStorage)
-  public/           # logo assets
-design/             # brief.md (locked tokens), critique-notes.md, screenshots/
+  public/           # scope-glyph logo
+frontend-legacy/    # previous citation-ledger UI (also on the frontend-legacy branch)
+design/             # brief.md (locked tokens for the legacy UI), critique-notes.md, screenshots/
 ```
 
 ## Environment variables
